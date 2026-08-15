@@ -18,7 +18,7 @@ Derived from [ValorantReplayParser](https://github.com/michel-giehl/ValorantRepl
 by Michel Giehl; see [`NOTICE.md`](NOTICE.md). Not affiliated with, endorsed
 by, or approved by Riot Games.
 
-**Current state:** `cargo +1.86.0 test --workspace --locked` **557 passing**,
+**Current state:** `cargo +1.86.0 test --workspace --locked` **564 passing**,
 `tools/tests` **469 passing** -- see [Status](#status) for the rest.
 
 - Run it: [`docs/USAGE.md`](docs/USAGE.md)
@@ -97,7 +97,7 @@ constants + three word functions); see
 - **Reproducible** — Parquet output is byte-for-byte identical run to run.
 - **No `unsafe`** — `#![forbid(unsafe_code)]` in every crate; the only FFI is
   Oodle, isolated in an external crate.
-- **557 tests** plus a layered validation suite (framing / bytes / decode
+- **564 tests** plus a layered validation suite (framing / bytes / decode
   errors / semantics).
 
 ## Table of contents
@@ -125,7 +125,7 @@ constants + three word functions); see
 cargo +1.86.0 build --release -p vrfkit --features export --locked
 
 vrfkit inspect  <file.vrf>                          # header / branch / chunk summary
-vrfkit validate <file.vrf> [--diagnostics]          # grammar oracle, writes nothing
+vrfkit validate <file.vrf> [--diagnostics] [--transform <branch>]   # grammar oracle, writes nothing
 vrfkit export   <file.vrf> --out <dir> [--checkpoints]
 ```
 
@@ -133,6 +133,12 @@ vrfkit export   <file.vrf> --out <dir> [--checkpoints]
 parsing and returns immediately. `validate` walks every content block through
 the RepLayout grammar and reports a pass rate; it writes no files. `export`
 writes the Parquet tables and manifest described under [Output](#output).
+
+`validate --transform <branch>` forces a registered transform onto a file that
+asks for a different one, which is how a candidate transform for a new build
+gets measured -- the pass rate separates right from wrong almost binarily. It
+always exits 3, because a forced run measures a hypothesis rather than the file.
+See [Bringing up a new game build](CONTRIBUTING.md#bringing-up-a-new-game-build).
 
 `export` is a default feature. Drop it with `--no-default-features` and
 `arrow`/`parquet`/`zstd` never enter the dependency tree:
@@ -285,7 +291,7 @@ it as one gives the year 3626.
 ## Status
 
 Work in progress. Currently verified: `cargo +1.86.0 test --workspace --locked`
-**557 passing**, strict workspace `clippy -D warnings` **0**, `cargo fmt` clean,
+**564 passing**, strict workspace `clippy -D warnings` **0**, `cargo fmt` clean,
 and `check_ascii` on 118 files. The Python suite in `tools/tests` has 469 tests.
 
 Re-measure per-crate counts with `cargo test -p <crate>`. Counts are omitted

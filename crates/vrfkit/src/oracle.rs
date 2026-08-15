@@ -171,6 +171,17 @@ pub enum Verdict {
     ValidationFailed,
     /// No RepLayout or ClassNetCache blocks at all -- nothing was validated.
     NoContentBlocks,
+    /// The run used a transform the file did not ask for (`--transform`), so it
+    /// measured a hypothesis rather than the file.
+    ///
+    /// Kept apart from [`Verdict::Passed`] deliberately, and it can never be
+    /// exit 0. The pass rate a probe prints is the whole point of the flag --
+    /// it is how you tell a candidate transform from a wrong one -- but "this
+    /// replay validates" is a claim about the replay's OWN transform, and a
+    /// probe has no standing to make it. A probe that could exit 0 would let a
+    /// forced run be mistaken for real support by any script that checks the
+    /// code instead of reading the number.
+    Probe,
 }
 
 impl Verdict {
@@ -196,6 +207,7 @@ impl Verdict {
             Self::Passed => 0,
             Self::ValidationFailed => 1,
             Self::NoContentBlocks => 2,
+            Self::Probe => 3,
         }
     }
 }
@@ -230,10 +242,19 @@ fn verdict_from_stats(stats: &NetStats, replay_data_trailing_bytes: u64) -> Verd
 /// Run the validate oracle. If `diagnostics` is true, print full diagnostic
 /// dumps for every malformed/skipped event.
 ///
+/// `transform_override` forces a registered branch's transform onto a file that
+/// asks for a different one, which is how a candidate transform for an
+/// unregistered build gets measured. It downgrades the verdict to
+/// [`Verdict::Probe`]; see there for why it can never report success.
+///
 /// The `Result` is still the container/IO failure channel -- a file that cannot
 /// be read at all is an error, not a verdict. A file that *was* read reports
 /// through [`Verdict`].
-pub fn run(path: &str, diagnostics: bool) -> Result<Verdict, CliError> {
+pub fn run(
+    path: &str,
+    diagnostics: bool,
+    transform_override: Option<&str>,
+) -> Result<Verdict, CliError> {
     let start = Instant::now();
 
     eprintln!("reading {path}...");
@@ -244,11 +265,20 @@ pub fn run(path: &str, diagnostics: bool) -> Result<Verdict, CliError> {
     let compressed = preamble.info.compressed;
     let encrypted = preamble.info.encrypted;
 
+    // The file's own branch is still what gets reported; the override only
+    // decides which transform is applied to the payloads.
+    let transform_branch = transform_override.unwrap_or(branch.as_str());
     eprintln!("branch: {branch}");
+    if let Some(forced) = transform_override {
+        eprintln!("PROBE: forcing the '{forced}' transform onto a '{branch}' replay.");
+        eprintln!(
+            "PROBE: this measures a hypothesis, not the file. The verdict is exit 3 regardless."
+        );
+    }
     eprintln!("validating RepLayout grammar on every ReplayData content block...");
 
     let mut cache = NetGuidCache::new();
-    let mut repl_reader = ReplicationReader::new(branch)
+    let mut repl_reader = ReplicationReader::new(transform_branch)
         .map_err(|e| CliError::Usage(format!("unsupported branch: {e}")))?;
 
     let mut total_packets: u32 = 0;
@@ -306,6 +336,9 @@ pub fn run(path: &str, diagnostics: bool) -> Result<Verdict, CliError> {
     println!();
     println!("=== Validation Oracle ===");
     println!("  Branch:               {branch}");
+    if let Some(forced) = transform_override {
+        println!("  Transform FORCED to:  {forced}  <- PROBE, not this file's transform");
+    }
     println!("  Total content blocks: {total_content}");
     println!("    RepLayout:          {rep_layout}");
     println!("    ClassNetCache:      {class_net}");
@@ -352,7 +385,10 @@ pub fn run(path: &str, diagnostics: bool) -> Result<Verdict, CliError> {
     // that framed, decoded and walked cleanly. With a correct transform this
     // should be 100%; a wrong one collapses it toward zero.
     let total_with_content = rep_layout + class_net;
-    let verdict = verdict_from_stats(stats, replay_data_trailing_bytes);
+    let verdict = match transform_override {
+        Some(_) => Verdict::Probe,
+        None => verdict_from_stats(stats, replay_data_trailing_bytes),
+    };
     if total_with_content == 0 {
         println!("  No content blocks found - cannot validate.");
     } else {
@@ -458,6 +494,10 @@ fn verdict_line(verdict: Verdict) -> &'static str {
         Verdict::Passed => "PASS - all ReplayData was consumed and decoded (exit 0)",
         Verdict::ValidationFailed => "FAIL - ReplayData validation found loss (exit 1)",
         Verdict::NoContentBlocks => "CANNOT VALIDATE - no content blocks found (exit 2)",
+        Verdict::Probe => {
+            "PROBE - a forced transform was measured, so this file got NO verdict (exit 3). \
+             Read the pass rate, not the exit code."
+        }
     }
 }
 
@@ -687,5 +727,18 @@ mod tests {
         assert_eq!(Verdict::Passed.exit_code(), 0);
         assert_eq!(Verdict::ValidationFailed.exit_code(), 1);
         assert_eq!(Verdict::NoContentBlocks.exit_code(), 2);
+        assert_eq!(Verdict::Probe.exit_code(), 3);
+    }
+
+    /// A probe must never earn the success code, whatever the counters say.
+    ///
+    /// `--transform` exists to be pointed at a replay the parser does NOT
+    /// support, and a candidate transform that happens to frame everything
+    /// would otherwise exit 0 -- indistinguishable, to any script, from the
+    /// build actually being supported.
+    #[test]
+    fn a_probe_can_never_exit_zero() {
+        assert_ne!(Verdict::Probe.exit_code(), Verdict::Passed.exit_code());
+        assert_ne!(Verdict::Probe, Verdict::Passed);
     }
 }

@@ -9,20 +9,59 @@ use crate::error::CliError;
 use crate::inspect;
 use crate::oracle;
 
+/// The part of a replay branch string that has never differed between builds.
+///
+/// Only `--transform` uses this, to let a human type `release-13.02` instead of
+/// the full header string. It deliberately does **not** live in
+/// `vrf_transform::TransformVersion::from_branch`: that function matches the
+/// string a replay header actually carries, and a prefix-tolerant lookup there
+/// would let a file whose branch merely resembles a known one resolve to the
+/// wrong transform -- which produces plausible garbage rather than an error.
+///
+/// `branch_prefix_holds_for_every_registered_build` pins the assumption, so a
+/// build that arrives under a different prefix fails a test instead of having
+/// its name silently mangled.
+const BRANCH_PREFIX: &str = "++Ares-Core+";
+
+/// Expand a `--transform` argument to a full branch string.
+///
+/// Anything already starting with `+` is taken as written, so a full header
+/// string pasted from `inspect` still works and a typo in the prefix reaches
+/// the lookup intact instead of being prepended onto.
+fn resolve_transform_branch(arg: &str) -> String {
+    if arg.starts_with('+') {
+        arg.to_owned()
+    } else {
+        format!("{BRANCH_PREFIX}{arg}")
+    }
+}
+
 const USAGE: &str = "\
 vrfkit -- VALORANT replay (.vrf) toolkit
 
 USAGE:
     vrfkit inspect  <file.vrf>
-    vrfkit validate <file.vrf> [--diagnostics]
+    vrfkit validate <file.vrf> [--diagnostics] [--transform <branch>]
     vrfkit export   <file.vrf> --out <dir> [--checkpoints]
 
 SUBCOMMANDS:
     inspect   Print replay info, header, branch, and chunk summary
     validate  Run the RepLayout grammar oracle on every ReplayData content
               block. Exits 0 when all of them framed, 1 when any did not,
-              and 2 when the file carried no content blocks to check.
+              2 when the file carried no content blocks to check, and 3 when
+              --transform made the run a probe rather than a verdict.
               --diagnostics  Print full context for every malformed/skipped event
+              --transform <branch>
+                             Force a registered branch's transform onto this
+                             file instead of the one its header asks for. Takes
+                             either a bare `release-13.02` or the full
+                             `++Ares-Core+release-13.02`. For bringing up an
+                             unsupported build: implement a candidate, point
+                             this at a real replay, and read the pass rate (a
+                             correct transform frames ~100%, a wrong one ~0%).
+                             Always exits 3 -- a forced run measures a
+                             hypothesis, not the file, and must not be
+                             mistakable for support.
     export    Write five Parquet tables (fields, movement, actors,
               net_guids, events) + manifest.json
               --checkpoints  Also parse Checkpoint chunks into
@@ -60,13 +99,25 @@ pub fn run(args: &[String]) -> Result<u8, CliError> {
                 .get(2)
                 .ok_or_else(|| CliError::Usage("validate requires <file.vrf>".to_string()))?;
             let mut diagnostics = false;
-            for arg in args.iter().skip(3) {
-                match arg.as_str() {
+            let mut transform: Option<String> = None;
+            let mut i = 3;
+            while i < args.len() {
+                match args[i].as_str() {
                     "--diagnostics" if !diagnostics => diagnostics = true,
                     "--diagnostics" => {
                         return Err(CliError::Usage(
                             "duplicate option: --diagnostics".to_string(),
                         ));
+                    }
+                    "--transform" if transform.is_some() => {
+                        return Err(CliError::Usage("duplicate option: --transform".to_string()));
+                    }
+                    "--transform" => {
+                        i += 1;
+                        let arg = args.get(i).map(String::as_str).ok_or_else(|| {
+                            CliError::Usage("--transform requires a branch string".to_string())
+                        })?;
+                        transform = Some(resolve_transform_branch(arg));
                     }
                     other => {
                         return Err(CliError::Usage(format!(
@@ -74,8 +125,9 @@ pub fn run(args: &[String]) -> Result<u8, CliError> {
                         )));
                     }
                 }
+                i += 1;
             }
-            oracle::run(file, diagnostics).map(oracle::Verdict::exit_code)
+            oracle::run(file, diagnostics, transform.as_deref()).map(oracle::Verdict::exit_code)
         }
         "export" => export(args).map(|()| 0),
         "help" | "--help" | "-h" => {
@@ -160,6 +212,90 @@ mod tests {
         let err = run(&owned(&["vrfkit", "validate", "missing.vrf", "other.vrf"]))
             .expect_err("validate must not ignore another input path");
         assert!(matches!(err, CliError::Usage(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn validate_rejects_transform_without_a_branch() {
+        let err = run(&owned(&[
+            "vrfkit",
+            "validate",
+            "missing.vrf",
+            "--transform",
+        ]))
+        .expect_err("--transform must not silently mean 'no override'");
+        assert!(matches!(err, CliError::Usage(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn validate_rejects_duplicate_transform() {
+        let err = run(&owned(&[
+            "vrfkit",
+            "validate",
+            "missing.vrf",
+            "--transform",
+            "++Ares-Core+release-13.02",
+            "--transform",
+            "++Ares-Core+release-13.01",
+        ]))
+        .expect_err("validate must reject a duplicate --transform");
+        assert!(matches!(err, CliError::Usage(_)), "got {err:?}");
+    }
+
+    /// The shorthand is only safe while every build shares the prefix.
+    ///
+    /// If a future build arrives under a different one, `release-<x>` would be
+    /// expanded into a branch that does not exist while the real branch became
+    /// untypeable in short form. Fail here instead.
+    #[test]
+    fn branch_prefix_holds_for_every_registered_build() {
+        for version in vrf_transform::ALL_VERSIONS {
+            assert!(
+                version.branch().starts_with(BRANCH_PREFIX),
+                "{} does not start with {BRANCH_PREFIX}; the --transform shorthand cannot expand it",
+                version.branch()
+            );
+        }
+    }
+
+    #[test]
+    fn transform_shorthand_expands_to_the_full_branch() {
+        for version in vrf_transform::ALL_VERSIONS {
+            let full = version.branch();
+            let short = full
+                .strip_prefix(BRANCH_PREFIX)
+                .expect("prefix checked above");
+            assert_eq!(resolve_transform_branch(short), full);
+            // A full string pasted from `inspect` must survive unchanged.
+            assert_eq!(resolve_transform_branch(full), full);
+        }
+    }
+
+    /// A mistyped prefix reaches the lookup as written, so the error names what
+    /// was actually asked for rather than a doubly-prefixed mangling of it.
+    #[test]
+    fn a_leading_plus_is_never_prefixed_again() {
+        assert_eq!(
+            resolve_transform_branch("++Ares-Kore+release-13.02"),
+            "++Ares-Kore+release-13.02"
+        );
+    }
+
+    /// `--transform` takes the NEXT argument as its value, so a branch string
+    /// must not be re-parsed as an option or as a surplus input path.
+    #[test]
+    fn validate_accepts_transform_with_diagnostics_and_reaches_the_file() {
+        let err = run(&owned(&[
+            "vrfkit",
+            "validate",
+            "missing.vrf",
+            "--transform",
+            "++Ares-Core+release-13.02",
+            "--diagnostics",
+        ]))
+        .expect_err("the file does not exist, so this must fail at open time");
+        // Io, not Usage: argument parsing accepted the pair and got as far as
+        // opening the replay.
+        assert!(matches!(err, CliError::Io(_)), "got {err:?}");
     }
 
     #[cfg(feature = "export")]

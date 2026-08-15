@@ -148,6 +148,109 @@ These corrupt downstream consumers silently — no test fails when they break.
 - **No hardcoded names** in the parser. Display names live in the Python adapter
   (`tools/equippable_table.py`), never in a Rust crate.
 
+## Bringing up a new game build
+
+Riot rotates the payload transform every build. Across the six in the tree no
+two `word64` implementations are alike — the operator order, the `k` values it
+rotates the state by, and whether the S-box stage runs at all have all changed
+between consecutive releases. What has *never* changed is the skeleton: the
+PRNG and its multiplier, `initial_prng_b`, the 64 → 32 → 8 → tail staging,
+`seed_for`, and the S-box tables. So a new build is one `SeededTransform` impl,
+and the rest of the workspace needs nothing: the container is version-pinned but
+not build-pinned, field names come from the replay, handle layouts resolve by
+name, and the checksum type table is content-addressed.
+
+### 1. Check the container first
+
+```bash
+vrfkit inspect <new.vrf>
+```
+
+This works before any transform is registered. Confirm the branch string and
+that `Network version` / `Engine net proto` still read 19 / 32. If either
+moved, stop — that is a format change, and the pins in
+`crates/vrf-container/src/limits.rs` are **not** a knob to turn to make a file
+parse.
+
+### 2. Ask whether the transform even changed
+
+```bash
+vrfkit validate <new.vrf> --transform release-<previous>
+```
+
+`--transform` forces a registered branch's transform onto the file. History says
+it will not match — but confirming costs one command, and the same flag is the
+measuring instrument for everything below. It always exits 3: a forced run
+measures a hypothesis, not the file, and must never be mistakable for support.
+
+### 3. Recover `word64` only
+
+Register the new branch with a candidate `word64`, and leave the other two
+lanes returning `0` for now. The oracle is near-binary and the staging gives a
+graded signal, so you can confirm one lane at a time:
+
+| lanes implemented | expected pass rate |
+|---|---|
+| nothing right | ~0% |
+| `word64` right, 32/8 stubbed | ~99.6% |
+| `word64` + `word32` | ~99.8% |
+| all three | ~100% |
+
+Those middle rows are what makes this tractable: **a correct `word64` is
+visible on its own**, because only payloads whose length is not a multiple of
+64 bits depend on the shorter lanes, and they are a small minority. You are
+never guessing three functions at once.
+
+`TAIL_XOR` is not an independent constant — it is the low byte of
+`SEED_ADDEND` in all six builds, and a test in `versions/mod.rs` enforces that.
+
+### 4. Derive the other two lanes
+
+Do not reverse them separately. Within one build the three word functions are
+the same primitive sequence in three widths, differing only in how each derives
+its per-word constant from `state`:
+
+| lane | state derivation | modulus |
+|---|---|---|
+| 64-bit | `state.rotate_right(k)` | `% 63` |
+| 32-bit | `state.rotate_left(k)` | `% 31` |
+| byte | `state.wrapping_mul(11.pow(k))` | `% 7` |
+
+Same `k` set, same operator order, same positions. The byte lane's magic
+numbers are powers of eleven in disguise: `0x79` is `11^2`, `0x533` is `11^3`,
+and `0x31`/`0x29` are `11^4`/`11^6` reduced mod 256. Expect one deliberate
+asymmetry — several builds add or drop a complement in one lane — which shows up
+as a pass rate that improves but stops short of 100%.
+
+`versions/v13_02_china.rs` is the worked example: its 32-bit and byte lanes were
+recovered this way after its source implementation had left both zeroing their
+input.
+
+### 5. Prove it twice
+
+A replay validating is not enough on its own, and neither are golden vectors.
+
+- **Golden vectors** catch a transcription slip between two implementations.
+  They must come from somewhere other than the Rust you just wrote, or they
+  prove nothing. `tools/extract_golden.py` lifts them from the C# fixture where
+  one exists; `tools/china_transform_oracle.py` is the pattern to copy when one
+  does not.
+- **A real replay** catches the algorithm being wrong, which no vector taken
+  from your own implementation ever will.
+- **Values, not counters.** `Decode errors: 0` means nothing threw. Export and
+  read something with a known shape — a scoreline that reaches 13, a
+  half-time side switch at the right round — before believing it.
+
+### 6. Register it everywhere
+
+`ALL_VERSIONS` is `[TransformVersion; N]`; its *type* carries the count, so
+adding a build touches `lib.rs` (import, variant, array, `branch()`, `apply()`),
+`versions/mod.rs` (`mod`, `pub use`, the `build_table()` row), the golden
+generator, and the build tables in `README.md` and `docs/USAGE.md`. The tests
+that fail until you do are `every_registered_build_is_covered`,
+`tail_xor_is_low_byte_of_seed_addend`, `build_constants_are_all_distinct`, and
+`check_docs.py`. Let them.
+
 ## Generated files — never hand-edit
 
 | File | Generator |

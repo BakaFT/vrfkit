@@ -47,7 +47,7 @@ indistinguishable from one that wrote the files.
 
 ```
 vrfkit inspect  <file.vrf>
-vrfkit validate <file.vrf> [--diagnostics]
+vrfkit validate <file.vrf> [--diagnostics] [--transform <branch>]
 vrfkit export   <file.vrf> --out <dir> [--checkpoints]
 ```
 
@@ -84,8 +84,9 @@ reports a pass rate. **It writes no files.**
 ```
 
 **Exit code**: `0` every content block framed, `1` malformed framing was found,
-`2` there was nothing to validate (no ReplayData blocks). Those are three
-different outcomes and are kept apart deliberately -- a file this command cannot read must not be reported as a file
+`2` there was nothing to validate (no ReplayData blocks), `3` the run was a
+`--transform` probe and rendered no verdict. Those outcomes are kept apart
+deliberately -- a file this command cannot read must not be reported as a file
 that passed. The pass rate itself is NOT gated; see below.
 
 The oracle walks the **ReplayData stream only**. Checkpoint chunks carry their
@@ -100,6 +101,42 @@ framing` and `Transform failed`, and **both must be zero.**
 
 `--diagnostics` prints context for every failed block. By default it shows up to
 32 lines and prints totals / shown / omitted counts in the header.
+
+#### `--transform <branch>` -- measuring a transform you are not sure about
+
+Forces a registered branch's transform onto the file instead of the one its
+header asks for. This is the instrument for bringing up an unsupported build:
+implement a candidate, point it at a real replay, and read the pass rate.
+
+The `++Ares-Core+` prefix is the same on every build, so the flag takes either
+form -- `release-13.02` or the full `++Ares-Core+release-13.02` pasted from
+`inspect`. The output always names the expanded branch, so what actually ran is
+never ambiguous. (The shorthand is a CLI convenience only: matching a replay's
+own header branch stays exact, because a prefix-tolerant lookup there could
+resolve a merely-similar branch to the wrong transform.)
+
+```bash
+# Did the transform actually change in this build?
+vrfkit validate new.vrf --transform release-13.02
+```
+
+```
+PROBE: forcing the '++Ares-Core+release-13.02' transform onto a '++Ares-Core+release-china-13.02' replay.
+  Branch:               ++Ares-Core+release-china-13.02
+  Transform FORCED to:  ++Ares-Core+release-13.02  <- PROBE, not this file's transform
+  ORACLE PASS RATE:     0.922049% (1839 / 199447 blocks passed)
+  VERDICT: PROBE - a forced transform was measured, so this file got NO verdict (exit 3).
+```
+
+The signal is close to binary -- that same file reads 100.000000% under its own
+transform -- which is what makes the flag useful for a lane-at-a-time bring-up.
+See [Bringing up a new game build](../CONTRIBUTING.md#bringing-up-a-new-game-build).
+
+**It always exits 3, even when the pass rate is 100%.** A probe measures a
+hypothesis, not the file; "this replay validates" is a claim about the replay's
+own transform and a forced run has no standing to make it. Exiting 0 would let
+any script that checks the code instead of reading the number mistake a forced
+run for real support.
 
 ### `export`
 
@@ -551,7 +588,7 @@ deliberately sequential for accuracy.
 ### Quick sweep -- after any change
 
 ```bash
-cargo +1.86.0 test --workspace --locked                              # 557 passing
+cargo +1.86.0 test --workspace --locked                              # 564 passing
 cargo +1.86.0 clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo +1.86.0 fmt --check
 python -W error tools/check_ascii.py --check                         # 118 files
