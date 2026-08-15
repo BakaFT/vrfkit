@@ -20,10 +20,11 @@
 //!
 //! # Per-build variation
 //!
-//! The algorithm skeleton has been stable from release-12.10 to release-13.02.
-//! What changes per build is two constants and the order of a handful of bit
-//! primitives; see [`versions`]. Adding a build means writing one `impl` with
-//! two constants and three word functions.
+//! The algorithm skeleton has been stable from release-12.10 to release-13.02,
+//! and across the regional split: the Tencent-published `release-china-13.02`
+//! shares it too. What changes per build is two constants and the order of a
+//! handful of bit primitives; see [`versions`]. Adding a build means writing one
+//! `impl` with two constants and three word functions.
 //!
 //! # Example
 //!
@@ -56,7 +57,7 @@
 //! it cannot use -- but it cannot be done without changing this crate's public
 //! API, which is frozen:
 //!
-//! - [`ALL_VERSIONS`] is `[TransformVersion; 5]`. Its *type* encodes the build
+//! - [`ALL_VERSIONS`] is `[TransformVersion; 6]`. Its *type* encodes the build
 //!   count, so dropping one build changes the type.
 //! - [`TransformVersion`]'s variants are public. Gating one removes a name that
 //!   callers match on.
@@ -65,8 +66,8 @@
 //! and callers to stop matching variants exhaustively. That is a reasonable
 //! change and it is recommended, but it is an API change rather than a feature
 //! flag, so it is not made here. The cost of not gating is small in any case:
-//! the five `impl`s are branch-free arithmetic, and the only sizeable data is
-//! the three S-box tables (used by release-13.00 and release-13.02 alone).
+//! the six `impl`s are branch-free arithmetic, and the only sizeable data is
+//! the three S-box tables (used by release-13.00 and both 13.02 builds alone).
 
 #![forbid(unsafe_code)]
 
@@ -74,7 +75,7 @@ pub mod helpers;
 pub mod sbox;
 pub mod versions;
 
-use versions::{SeededTransform, V12_10, V12_11, V13_00, V13_01, V13_02};
+use versions::{SeededTransform, V12_10, V12_11, V13_00, V13_01, V13_02, V13_02China};
 use vrf_bitio::{BitError, BitReader, Result as BitResult};
 
 /// Derive the transform seed for a content block.
@@ -170,15 +171,18 @@ pub enum TransformVersion {
     V1301,
     /// `++Ares-Core+release-13.02`
     V1302,
+    /// `++Ares-Core+release-china-13.02`
+    V1302China,
 }
 
 /// Every transform this build of the crate knows about.
-pub const ALL_VERSIONS: [TransformVersion; 5] = [
+pub const ALL_VERSIONS: [TransformVersion; 6] = [
     TransformVersion::V1210,
     TransformVersion::V1211,
     TransformVersion::V1300,
     TransformVersion::V1301,
     TransformVersion::V1302,
+    TransformVersion::V1302China,
 ];
 
 /// A replay whose branch has no registered transform.
@@ -228,6 +232,7 @@ impl TransformVersion {
             Self::V1300 => V13_00::BRANCH,
             Self::V1301 => V13_01::BRANCH,
             Self::V1302 => V13_02::BRANCH,
+            Self::V1302China => V13_02China::BRANCH,
         }
     }
 
@@ -245,6 +250,7 @@ impl TransformVersion {
             Self::V1300 => transform_in_place::<V13_00>(buf, bit_count, seed),
             Self::V1301 => transform_in_place::<V13_01>(buf, bit_count, seed),
             Self::V1302 => transform_in_place::<V13_02>(buf, bit_count, seed),
+            Self::V1302China => transform_in_place::<V13_02China>(buf, bit_count, seed),
         }
     }
 

@@ -14,6 +14,11 @@ BRANCHES = [
     "++Ares-Core+release-13.01",
     "++Ares-Core+release-13.02",
 ]
+# Carried by the fixture but deliberately NOT used: the generator drops these
+# rows and recomputes them with tools/china_transform_oracle.py, because the
+# fixture's implementation never recovered this build's 32-bit and byte lanes
+# and zeroes them instead.
+CHINA = "++Ares-Core+release-china-13.02"
 BOUNDARIES = [0, 1, 7, 8, 31, 32, 63, 64, 65, 287, 288]
 
 
@@ -27,6 +32,11 @@ def fixture(cases: list[tuple[str, int]]) -> str:
         "private const uint ActorNetGuid = 2;\n"
         "var cases = new[] {\n    " + ",\n    ".join(rows) + "\n};\n"
     )
+
+
+def payload_of(line: str) -> str:
+    """The expected-output hex from a generated `("branch", bits, "hex"),` row."""
+    return line.rsplit('"', 2)[1]
 
 
 class GoldenOracleContractTests(unittest.TestCase):
@@ -49,35 +59,81 @@ class GoldenOracleContractTests(unittest.TestCase):
             return result, content
 
     @staticmethod
-    def valid_cases():
+    def fixture_cases():
         return [(branch, bits) for branch in BRANCHES for bits in BOUNDARIES]
 
-    def test_exact_five_build_by_eleven_boundary_oracle_succeeds(self):
+    @classmethod
+    def valid_cases(cls):
+        return cls.fixture_cases() + [(CHINA, bits) for bits in BOUNDARIES]
+
+    def rows_for(self, output, branch):
+        return [line for line in output.splitlines() if f'("{branch}"' in line]
+
+    def test_exact_six_build_by_eleven_boundary_oracle_succeeds(self):
         result, output = self.run_generator(self.valid_cases())
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("55 vectors across 5 builds", output)
+        self.assertIn("66 vectors across 6 builds", output)
 
-    def test_non_55_oracle_is_rejected_without_replacing_previous_output(self):
-        result, output = self.run_generator(
-            self.valid_cases()[:-1], previous_output="previous oracle\n"
-        )
+    def test_non_55_fixture_is_rejected_without_replacing_previous_output(self):
+        cases = self.valid_cases()
+        cases.remove((BRANCHES[-1], 288))
+        result, output = self.run_generator(cases, previous_output="previous oracle\n")
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(output, "previous oracle\n")
         self.assertIn("55", result.stderr)
 
     def test_each_promised_build_must_have_the_full_boundary_set(self):
-        cases = self.valid_cases()
+        cases = self.fixture_cases()
         cases[-1] = (BRANCHES[0], cases[-1][1])
+        cases += [(CHINA, bits) for bits in BOUNDARIES]
         result, _ = self.run_generator(cases)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(BRANCHES[-1], result.stderr)
 
     def test_duplicate_boundary_cannot_replace_a_missing_boundary(self):
-        cases = self.valid_cases()
+        cases = self.fixture_cases()
         cases[-1] = (BRANCHES[-1], 287)
+        cases += [(CHINA, bits) for bits in BOUNDARIES]
         result, _ = self.run_generator(cases)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("288", result.stderr)
+
+    def test_a_fixture_without_the_superseded_rows_is_rejected(self):
+        # The drop is explicit rather than incidental, so a fixture that stops
+        # carrying the superseded rows -- or starts carrying corrected ones --
+        # has to be looked at instead of silently passing through.
+        result, _ = self.run_generator(self.fixture_cases())
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(CHINA, result.stderr)
+
+    def test_china_rows_come_from_the_oracle_not_the_fixture(self):
+        # Every fixture row here is all-zero hex. The five lifted builds must
+        # emit exactly that; China must not, because its rows are recomputed
+        # from the payload rather than copied.
+        result, output = self.run_generator(self.valid_cases())
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        china_rows = self.rows_for(output, CHINA)
+        self.assertEqual(len(china_rows), len(BOUNDARIES))
+
+        # 0 bits is empty and 1 bit is a zero payload whose single tail bit
+        # happens to stay clear, so those two legitimately remain all-zero.
+        recomputed = [
+            payload_of(line)
+            for line, bits in zip(china_rows, BOUNDARIES)
+            if bits > 1
+        ]
+        self.assertTrue(recomputed)
+        self.assertTrue(
+            all(set(hex_text) != {"0"} for hex_text in recomputed),
+            f"China rows still look like the all-zero fixture: {recomputed}",
+        )
+
+        lifted = [payload_of(line) for line in self.rows_for(output, BRANCHES[0])]
+        self.assertTrue(
+            all(set(hex_text) <= {"0"} for hex_text in lifted),
+            "a lifted build stopped matching its fixture rows",
+        )
 
 
 if __name__ == "__main__":

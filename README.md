@@ -18,8 +18,8 @@ Derived from [ValorantReplayParser](https://github.com/michel-giehl/ValorantRepl
 by Michel Giehl; see [`NOTICE.md`](NOTICE.md). Not affiliated with, endorsed
 by, or approved by Riot Games.
 
-**Current state:** `cargo +1.86.0 test --workspace --locked` **555 passing**,
-`tools/tests` **467 passing** -- see [Status](#status) for the rest.
+**Current state:** `cargo +1.86.0 test --workspace --locked` **557 passing**,
+`tools/tests` **469 passing** -- see [Status](#status) for the rest.
 
 - Run it: [`docs/USAGE.md`](docs/USAGE.md)
 - What's extractable: [`docs/DATA.md`](docs/DATA.md)
@@ -43,13 +43,18 @@ understood.
 | Build | Branch | Status | Verified by |
 |---|---|---|---|
 | **13.02** | `release-13.02` | ✅ Supported | Preserved replay + 27-file stress test |
+| **13.02 China** | `release-china-13.02` | ✅ Supported | 2 replays / 893,665 blocks at 100% oracle |
 | **13.01** | `release-13.01` | ✅ Supported | 215-replay full corpus |
 | **13.00** | `release-13.00` | ✅ Supported | Preserved fixture + golden vectors |
 | **12.11** | `release-12.11` | ✅ Supported | Preserved fixture + golden vectors |
 | **12.10** | `release-12.10` | ✅ Supported | Preserved fixture + golden vectors |
 
-All branches are `++Ares-Core+release-<build>`. Adding a build is one
-`SeededTransform` impl (two constants + three word functions); see
+Branches are `++Ares-Core+release-<build>`, except the Tencent-published China
+client, which is `++Ares-Core+release-china-13.02`. It reports the same `13.02`
+format version as the global build and runs the same engine, but obfuscates
+payloads differently, so **the branch string and not the version number is what
+selects a transform.** Adding a build is one `SeededTransform` impl (two
+constants + three word functions); see
 [Adding a new build](#supported-builds-and-the-cost-of-a-new-build).
 
 ## Highlights
@@ -92,7 +97,7 @@ All branches are `++Ares-Core+release-<build>`. Adding a build is one
 - **Reproducible** — Parquet output is byte-for-byte identical run to run.
 - **No `unsafe`** — `#![forbid(unsafe_code)]` in every crate; the only FFI is
   Oodle, isolated in an external crate.
-- **555 tests** plus a layered validation suite (framing / bytes / decode
+- **557 tests** plus a layered validation suite (framing / bytes / decode
   errors / semantics).
 
 ## Table of contents
@@ -280,8 +285,8 @@ it as one gives the year 3626.
 ## Status
 
 Work in progress. Currently verified: `cargo +1.86.0 test --workspace --locked`
-**555 passing**, strict workspace `clippy -D warnings` **0**, `cargo fmt` clean,
-and `check_ascii` on 117 files. The Python suite in `tools/tests` has 467 tests.
+**557 passing**, strict workspace `clippy -D warnings` **0**, `cargo fmt` clean,
+and `check_ascii` on 118 files. The Python suite in `tools/tests` has 469 tests.
 
 Re-measure per-crate counts with `cargo test -p <crate>`. Counts are omitted
 from the table below on purpose -- they go stale, and re-measuring is one line.
@@ -289,7 +294,7 @@ from the table below on purpose -- they go stale, and re-measuring is one line.
 | Layer | Crate | Feature flags |
 |---|---|---|
 | Bit reader / UE wire format | `vrf-bitio` | `alloc` (default; drop it for `no_std`) |
-| Payload transform (5 builds) | `vrf-transform` | none (the `ALL_VERSIONS` type encodes the count) |
+| Payload transform (6 builds) | `vrf-transform` | none (the `ALL_VERSIONS` type encodes the count) |
 | Container (info/header/chunk/event/checkpoint, Oodle) | `vrf-container` | `oodle` `event` `checkpoint` |
 | DemoFrame traversal | `vrf-frame` | none (sections are byte ranges for cursor alignment) |
 | Replay dynamic schema + GUID cache + checkpoint tables | `vrf-schema` | `checkpoint` |
@@ -607,11 +612,27 @@ the S-box table itself. What actually changes per build:
 | release-13.00 | `0x2949b6ef` | `0x11` | - | used |
 | release-13.01 | `0xe62fcd5c` | `0x24` | - | unused |
 | release-13.02 | `0x9e81a37c` | `0x04` | - | used |
+| release-china-13.02 | `0x9e70cf19` | `0x67` | - | used |
 
-In all five builds the **tail-XOR byte equals the low byte of the seed
+In all six builds the **tail-XOR byte equals the low byte of the seed
 addend.** It is a derived value, not an independent constant, and the
 relationship is pinned by a test in `versions/mod.rs` -- if a future build breaks
 the pattern, the test fails instead of the final byte silently corrupting.
+
+Two further relationships hold across every build, and they are what made the
+China client's unrecovered lanes recoverable. Within one build the three word
+functions are the same primitive sequence in three widths, differing only in how
+each derives its per-word constant from `state`:
+
+| lane | state derivation | modulus |
+|---|---|---|
+| 64-bit | `state.rotate_right(k)` | `% 63` |
+| 32-bit | `state.rotate_left(k)` | `% 31` |
+| byte | `state.wrapping_mul(11.pow(k))` | `% 7` |
+
+The byte lane's magic numbers are just powers of eleven wearing a disguise:
+release-13.02's `0x79` and `0x533` are `11^2` and `11^3`, and release-12.10's
+`0x31` and `0x29` are `11^4` and `11^6` reduced mod 256.
 
 So adding a build is one `SeededTransform` impl: two constants and three word
 functions (`word64` / `word32` / `byte`); everything else is shared.
@@ -677,7 +698,7 @@ resolution requires re-exporting from the original `.vrf`.
 ### 2. Minimal cost per build update
 
 See [Supported builds](#supported-builds-and-the-cost-of-a-new-build). Across
-five builds the only per-build variables are two constants (seed addend,
+six builds the only per-build variables are two constants (seed addend,
 offset) and a sign, plus whether the S-box stage is enabled; the PRNG,
 staging, tail-XOR, and S-box table are shared. A new build is one
 `SeededTransform` impl.

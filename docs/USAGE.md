@@ -85,9 +85,8 @@ reports a pass rate. **It writes no files.**
 
 **Exit code**: `0` every content block framed, `1` malformed framing was found,
 `2` there was nothing to validate (no ReplayData blocks). Those are three
-different outcomes and are kept apart deliberately -- a file this command
-cannot read must not be reported as a file that passed. The pass rate itself is
-NOT gated; see below.
+different outcomes and are kept apart deliberately -- a file this command cannot read must not be reported as a file
+that passed. The pass rate itself is NOT gated; see below.
 
 The oracle walks the **ReplayData stream only**. Checkpoint chunks carry their
 own replication framing and are not covered by this verdict; the count above
@@ -394,7 +393,7 @@ Take only the layer you need. Every crate is `#![forbid(unsafe_code)]`, and
 | Layer | Crate | Feature flags |
 |---|---|---|
 | Bit reader / UE wire format | `vrf-bitio` | `alloc` (default; drop it for `no_std`) |
-| Payload transform (5 builds) | `vrf-transform` | none |
+| Payload transform (6 builds) | `vrf-transform` | none |
 | Container (info/header/chunk/event/checkpoint, Oodle) | `vrf-container` | `oodle` `event` `checkpoint` |
 | DemoFrame traversal | `vrf-frame` | none |
 | Dynamic schema + GUID cache + checkpoint tables | `vrf-schema` | `checkpoint` |
@@ -429,7 +428,8 @@ needs it.
 | `apply_type_corrections.py` | Applies verified corrections/additions to that file and recomputes the two-line generation header |
 | `extract_checksum_types.py` | `crates/vrf-decode/src/checksum_table.rs` -- `compatible_checksum` -> `FieldType`, learned from the fields the overlay table already declares. Needs an export directory rather than the C# tree, since checksums come from the replay. Checksums whose donors disagree are dropped, which is the safety property. Repeat `--export` to widen the basis; the run **merges** into the committed table rather than replacing it, because a checksum this basis did not happen to see is still correct. `--check` asks whether the two agree *where they overlap* -- not whether they are byte-identical, which a content-addressed table cannot be across different sets of replays. |
 | `extract_sboxes.py` | `crates/vrf-transform/src/sbox.rs` |
-| `extract_golden.py` | `crates/vrf-transform/tests/data/golden_vectors.rs` |
+| `extract_golden.py` | `crates/vrf-transform/tests/data/golden_vectors.rs` -- lifts the five `release-*` builds from the C# fixture and computes `release-china-13.02` with `china_transform_oracle.py`. The fixture *does* carry China rows; they are dropped on purpose, and a fixture that stops carrying them fails rather than passing silently. |
+| `china_transform_oracle.py` | Not a generator on its own -- a second, independent implementation of the `release-china-13.02` payload transform, imported by `extract_golden.py`. It exists because that build has no usable external oracle: the C# fixture's vectors for it come from an implementation that never recovered the build's 32-bit and byte lanes and zeroes them, so six of its eleven vectors disagree with the real client. Reading the S-boxes out of the generated Rust table is deliberate -- they are shared with the lifted builds, so a corrupt table fails those first. |
 | `extract_equippables.py` | `tools/equippable_table.py` |
 
 **Order matters:** `extract_descriptors.py` -> `apply_type_corrections.py` ->
@@ -474,7 +474,7 @@ records the fields that failed the bar and why.
 | `compare_rpc_params.py` | RPC parameter comparison |
 | `compare_with_csharp.py` | Diff against the C# parser |
 | `check_effect_decoder.py` | Effect decoder (12 cases) |
-| `check_ascii.py` | Rust source ASCII sweep (117 files) |
+| `check_ascii.py` | Rust source ASCII sweep (118 files) |
 | `check_docs.py` | This document itself (below) |
 | `atomic_io.py` | Internal containment, recursive-removal and atomic-replacement helpers shared by mutating tools |
 
@@ -551,12 +551,12 @@ deliberately sequential for accuracy.
 ### Quick sweep -- after any change
 
 ```bash
-cargo +1.86.0 test --workspace --locked                              # 555 passing
+cargo +1.86.0 test --workspace --locked                              # 557 passing
 cargo +1.86.0 clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo +1.86.0 fmt --check
-python -W error tools/check_ascii.py --check                         # 117 files
+python -W error tools/check_ascii.py --check                         # 118 files
 python -W error tools/check_effect_decoder.py --check                # 12 cases
-python -W error -m unittest discover -s tools/tests -p "test_*.py"   # 467 passing
+python -W error -m unittest discover -s tools/tests -p "test_*.py"   # 469 passing
 python -W error tools/check_docs.py --fast
 python -W error tools/apply_type_corrections.py --check              # 133 corrections
 python -W error tools/extract_checksum_types.py --export tools/fixtures/checksum_export --check
@@ -643,6 +643,7 @@ silent change must be impossible.
 | 12.10, 12.11, 13.00 | One preserved fixture each + golden vectors |
 | 13.01 | Full 215-replay corpus |
 | 13.02 | 62 MB preserved replay + live measurement |
+| china-13.02 | 2 replays (Lotus, Sunset) + an independent Python oracle |
 
 13.02 measurement (preserved copy `1.vrf`; the result is identical across all 27
 demos in the directory at time of writing):
@@ -651,6 +652,25 @@ demos in the directory at time of writing):
 1.vrf     (62 MB)  774,299 blocks  568,557 fields  408,591 RPCs  pass 98.919512%
                    malformed 0 / transform failed 0 / decode errors 0
 ```
+
+china-13.02 measurement (`++Ares-Core+release-china-13.02`, the Tencent-published
+client -- same engine and container as global 13.02, different payload transform):
+
+```
+037bf6f5  (15 MB)  199,447 blocks  148,884 fields  103,704 RPCs  pass 100.000000%
+f9e3d7c1  (57 MB)  694,218 blocks                               pass 100.000000%
+                   malformed 0 / transform failed 0 / decode errors 0
+```
+
+That 100% is worth reading carefully, because it does **not** mean the China
+path decodes more than the global one. These replays hit the same
+`AbilitiesAndBuffsComponent` attribution gap the other builds do -- 1,033 blocks
+of it in `037bf6f5`, on `AbilitiesAndBuffsComponent`, `MapTargetingState`,
+`AttachedDamageSection` and `PatchVolume`. Every one of them was preserved whole
+(`RPC payload lost: 0`), and the oracle subtracts preserved payloads from its
+failure count, so they land outside the metric rather than inside it. What the
+100% does say is the narrower thing it is for: framing and the payload transform
+are correct on every block.
 
 Adding a new build takes one `SeededTransform` impl -- two constants and three
 word functions. See the README's
