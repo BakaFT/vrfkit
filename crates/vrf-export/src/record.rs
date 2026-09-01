@@ -137,13 +137,16 @@ pub struct MovementRecord {
     /// Server-assigned tick decoded from the move header.
     pub timestamp: u32,
     /// Move-header byte at bits [9..17]. Named for a posture it has never been
-    /// observed to carry: it is 0 on all 128,324,174 movement rows across 70
-    /// corpus replays. Exported anyway, because it is a byte the wire spends and
+    /// observed to carry: it is 0 on all 1,034,035,170 exported movement rows
+    /// across 527 corpus replays (builds 13.01, 13.02 and 13.04). Exported anyway,
+    /// because it is a byte the wire spends and
     /// a later build may start using it -- but do not read posture out of it.
     /// Crouch is `bCrouchHeld` on the character actor, or the ~19 cm step in
     /// `pos_z`.
     pub movement_state: u8,
-    /// 0 = variant0 (velocity absent on the wire), 1 = variant1.
+    /// 0 = variant0 (velocity absent on the wire), 1 = variant1. The same
+    /// 527-replay sweep observed variant1 on every exported row; retain the
+    /// discriminator so a future build cannot silently change that invariant.
     pub move_type: u8,
 }
 
@@ -158,7 +161,11 @@ pub struct ActorRecord {
     pub packet_id: u32,
     pub channel_index: u32,
     pub actor_net_guid: u32,
-    /// "open" or "close".
+    /// "open", "close", or "dormant". Dormancy is not destruction: only
+    /// "close" is a despawn, and treating "dormant" as one truncates the
+    /// lifetime of anything that goes dormant instead of closing (e.g. a
+    /// persistent ability) and double-counts its later re-open as a second
+    /// spawn.
     pub event: &'static str,
     /// Resolved class path; `None` when the GUID cache lacks the mapping.
     pub class_path: Option<String>,
@@ -211,4 +218,11 @@ pub struct EventRecord {
     /// Second payload word. `None` unless the group carries two
     /// (characterDeath: killer then killed NetGUID).
     pub word1: Option<u32>,
+    /// Leading u32 group tag from a structurally validated inner payload.
+    pub payload_tag: Option<u32>,
+    /// FString following the group-dependent words. This is the wire string,
+    /// not an inferred event label.
+    pub payload_name: Option<String>,
+    /// Trailing f32 seconds value from a structurally validated inner payload.
+    pub payload_seconds: Option<f32>,
 }

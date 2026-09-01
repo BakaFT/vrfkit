@@ -40,6 +40,8 @@ pub(crate) struct ManifestQuality<'a> {
     pub replay_data_trailing_bytes: u64,
     pub event_layout_mismatches: u64,
     pub event_first_layout_mismatch: Option<&'a str>,
+    pub event_payloads_decoded: u64,
+    pub event_payload_unknown_groups: u64,
     pub net: &'a NetStats,
     pub sink: &'a SinkTotals,
     pub error_report: &'a OverlayErrorReport,
@@ -158,6 +160,14 @@ pub fn write_manifest(
         &mut out,
         "build_target_type",
         &header.build_target_type.to_string(),
+        1,
+    );
+    // Reported so a header extension is visible rather than skipped in
+    // silence; see `ReplayHeader::trailing_bytes`'s own doc. Expected zero.
+    wkv(
+        &mut out,
+        "header_trailing_bytes",
+        &header.trailing_bytes.to_string(),
         1,
     );
     wkv(
@@ -297,7 +307,10 @@ pub fn write_manifest(
             out.push_str("    { ");
             out.push_str(&format!(
                 "\"actor_net_guid\": {guid}, \"subject\": {}, \"character_net_guid\": {}",
-                json_str(subject.as_deref().unwrap_or("")),
+                match subject {
+                    Some(s) => json_str(s),
+                    None => String::from("null"),
+                },
                 match character {
                     Some(c) => c.to_string(),
                     None => String::from("null"),
@@ -311,6 +324,17 @@ pub fn write_manifest(
         }
         out.push_str("  ],\n");
     }
+
+    // Net-field exports the cache could not place -- an out-of-range handle
+    // (or, unreachably from this call site, an unknown group). The C#
+    // reference silently drops these; this is that drop made visible.
+    // Expected zero.
+    wkv(
+        &mut out,
+        "dropped_field_exports",
+        &cache.dropped_field_exports().to_string(),
+        1,
+    );
 
     // Export groups
     out.push_str("  \"net_field_export_groups\": [\n");
@@ -364,6 +388,19 @@ pub fn write_manifest(
 fn quality_json(quality: &ManifestQuality<'_>) -> String {
     let mut out = String::with_capacity(8 * 1024);
     out.push_str("  \"quality\": {\n");
+    // First, because it is the one key that answers "is anything missing from
+    // the tables next to this file". Everything below it is evidence; this is
+    // the verdict, and it is the same arithmetic `validate` prints, taken from
+    // the same function so the two cannot disagree.
+    //
+    // Zero is printed, not omitted. A line that appears only when non-zero
+    // cannot distinguish "nothing was lost" from "this code stopped running".
+    wkv(
+        &mut out,
+        "content_blocks_lost",
+        &quality.net.lost_content_blocks().to_string(),
+        2,
+    );
     wkv(
         &mut out,
         "chunks_processed",
@@ -411,6 +448,18 @@ fn quality_json(quality: &ManifestQuality<'_>) -> String {
         &mut out,
         "event_first_layout_mismatch",
         &json_option(quality.event_first_layout_mismatch),
+        2,
+    );
+    wkv(
+        &mut out,
+        "event_payloads_decoded",
+        &quality.event_payloads_decoded.to_string(),
+        2,
+    );
+    wkv(
+        &mut out,
+        "event_payload_unknown_groups",
+        &quality.event_payload_unknown_groups.to_string(),
         2,
     );
     wkv(
@@ -528,6 +577,10 @@ fn write_net_quality(
         ("fields", stats.fields),
         ("rpcs", stats.rpcs),
         ("skipped_bits", stats.skipped_bits),
+        (
+            "content_block_framing_failures",
+            stats.content_block_framing_failures,
+        ),
         ("malformed_content_blocks", stats.malformed_content_blocks),
         ("transform_failures", stats.transform_failures),
         ("field_stream_failures", stats.field_stream_failures),
@@ -767,6 +820,8 @@ mod tests {
             replay_data_trailing_bytes: 0,
             event_layout_mismatches: 0,
             event_first_layout_mismatch: None,
+            event_payloads_decoded: 0,
+            event_payload_unknown_groups: 0,
             net: &net,
             sink: &sink,
             error_report: &errors,
@@ -791,6 +846,7 @@ mod tests {
             "fields",
             "rpcs",
             "skipped_bits",
+            "content_block_framing_failures",
             "malformed_content_blocks",
             "transform_failures",
             "field_stream_failures",
@@ -836,6 +892,7 @@ mod tests {
             "rpc_suffix_bits_dropped",
             "cnc_rpcs_emitted",
             // Run-level completeness and checkpoint-only accounting.
+            "content_blocks_lost",
             "chunks_processed",
             "export_groups",
             "movement_rows",
@@ -845,6 +902,8 @@ mod tests {
             "replay_data_trailing_bytes",
             "event_layout_mismatches",
             "event_first_layout_mismatch",
+            "event_payloads_decoded",
+            "event_payload_unknown_groups",
             "checkpoint_chunks",
             "checkpoint_guid_entries",
             "checkpoint_group_records",
@@ -873,6 +932,7 @@ mod tests {
                 "fields",
                 "rpcs",
                 "skipped_bits",
+                "content_block_framing_failures",
                 "malformed_content_blocks",
                 "transform_failures",
                 "field_stream_failures",
@@ -927,6 +987,52 @@ mod tests {
                 "quality manifest omitted or duplicated {key}: {json}"
             );
         }
+    }
+
+    /// The published verdict has to be the measured one.
+    ///
+    /// `quality.content_blocks_lost` is the single number a downstream
+    /// consumer reads to decide whether recounting the exported tables can
+    /// yield a coverage claim at all. A constant zero there would be exactly
+    /// the "counter that cannot move" this repository forbids -- it would read
+    /// as "nothing was lost" on a run that lost everything -- so this asserts
+    /// the emitted digits against `NetStats::lost_content_blocks`, on stats
+    /// where all four failure depths are non-zero and unequal.
+    #[test]
+    fn content_blocks_lost_publishes_the_measured_number() {
+        let net = NetStats {
+            malformed_content_blocks: 1,
+            transform_failures: 2,
+            field_stream_failures: 4,
+            rpc_stream_failures: 100,
+            unresolved_rpc_payloads_preserved: 92,
+            ..NetStats::default()
+        };
+        assert_eq!(net.lost_content_blocks(), 15);
+
+        let sink = SinkTotals::default();
+        let errors = OverlayErrorReport::default();
+        let json = quality_json(&ManifestQuality {
+            chunks_processed: 0,
+            export_groups: 0,
+            movement_rows: 0,
+            net_guid_rows: 0,
+            event_rows: 0,
+            event_trailing_bytes: 0,
+            replay_data_trailing_bytes: 0,
+            event_layout_mismatches: 0,
+            event_first_layout_mismatch: None,
+            event_payloads_decoded: 0,
+            event_payload_unknown_groups: 0,
+            net: &net,
+            sink: &sink,
+            error_report: &errors,
+            checkpoints: None,
+        });
+        assert!(
+            json.contains("\"content_blocks_lost\": 15"),
+            "quality did not publish the measured loss: {json}"
+        );
     }
 
     #[test]

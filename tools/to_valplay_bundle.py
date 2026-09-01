@@ -39,13 +39,15 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import math
 import os
 import re
 import struct as _struct
 import sys
 import tempfile
 import time
-from collections import defaultdict
+from bisect import bisect_right
+from collections import Counter, defaultdict
 from itertools import islice
 from pathlib import Path
 from typing import NamedTuple
@@ -79,6 +81,13 @@ MAX_OUTER_DEPTH = 16
 UNRESOLVED_CLASS_NET_CACHE_PAYLOAD_FIELD_NAME = (
     "__vrfkit_unresolved_class_net_cache_payload__"
 )
+
+# The group-path suffix that separates an RPC group from a replicated property
+# group. Shared with vrf-schema's CLASS_NET_CACHE_SUFFIX; the two are pinned
+# together by crates/vrfkit/tests/adapter_contract.rs, because a drift here
+# reclassifies every RPC as a property and yields a bundle that looks complete
+# and contains no kills, damage or abilities.
+CLASS_NET_CACHE_SUFFIX = "_ClassNetCache"
 
 # Substrings that mark a firing state as the weapon's secondary fire cycle.
 # Copied from ValorantShotFireModeResolver.AlternateMarkers; matched
@@ -258,10 +267,26 @@ class _Tally(dict):
             "rows with more than one typed column set (extras discarded)",
         "fabricated_shot_locations":
             "shot locations fabricated as the world origin",
+        "fabricated_shot_rotations":
+            "shot rotations fabricated as (0,0,0), indistinguishable from a "
+            "real aim of world +X",
+        "effect_half_read_pairs":
+            "shot effect (tag, value) pairs with one half unreadable "
+            "(pair dropped, e.g. a missing FiringState.AttackVector.N)",
+        "effect_array_residual_bits":
+            "shot effect blobs with more than a byte left over after "
+            "decoding (framing did not end where this parse expected)",
         "missing_manifest":
             "manifest.json absent (replay metadata substituted)",
         "empty_gameplay_tag_table":
             "shots decoded with no gameplay-tag table (fields keyed by index)",
+        "events_time_ms_regressions":
+            "events whose time_ms is lower than the line before (tie-break unsound)",
+        "upstream_row_count_disagreement":
+            "row counts the export declared that its own tables contradict",
+        "unknown_actor_lifecycle_events":
+            "actors.event values this adapter has no event type for "
+            "(published as actor_lifecycle_unknown)",
     }
 
     def __init__(self):
@@ -284,14 +309,14 @@ class _Tally(dict):
                 for name, reason in self.REASONS.items() if self[name]]
 
 
-def _bump(tally, name: str) -> None:
+def _bump(tally, name: str, n: int = 1) -> None:
     """Increment a counter if one is being kept; a `None` tally is a no-op.
 
     The leaf helpers take an optional tally so they stay callable -- and
     testable -- on their own. The conversion phases always pass a real one.
     """
     if tally is not None:
-        tally.bump(name)
+        tally.bump(name, n)
 
 
 # ---------------------------------------------------------------------------
@@ -447,8 +472,9 @@ def _parse_vector_or_zero(val, tally=None) -> dict:
     double (559.962145690918).
 
     Callers expect a dict, so an unparseable value still yields a zero vector
-    rather than None. That is a fabricated value and the one place in this
-    adapter that has one.
+    rather than None. That is a fabricated value, tallied as
+    `fabricated_shot_locations` -- `_parse_rotation` below does the same for
+    the paired Rotation parameter, under `fabricated_shot_rotations`.
 
     It used to be justified by "the shot filter upstream already guarantees a
     location is present, so it should be unreachable". There is no such
@@ -471,9 +497,18 @@ def _parse_vector_or_zero(val, tally=None) -> dict:
     return parsed
 
 
-def _parse_rotation(val) -> dict:
-    """Parse a Rotation value into {pitch, yaw, roll}."""
+def _parse_rotation(val, tally=None) -> dict:
+    """Parse a Rotation value into {pitch, yaw, roll}.
+
+    Mirrors `_parse_vector_or_zero`: an absent or unparseable Rotation still
+    yields {pitch:0, yaw:0, roll:0} rather than None, because callers (and
+    valplay's spray_control, which reads `shot.rotation` as the real aim
+    direction) expect a dict. That is a fabricated value indistinguishable
+    from a genuine (0,0,0) aim, so both fallback paths below tally it as
+    `fabricated_shot_rotations` rather than shipping it uncounted.
+    """
     if val is None:
+        _bump(tally, "fabricated_shot_rotations")
         return {"pitch": 0, "yaw": 0, "roll": 0}
     if isinstance(val, dict):
         return val
@@ -500,6 +535,7 @@ def _parse_rotation(val) -> dict:
                         "roll": components[2]}
             except ValueError:
                 pass
+    _bump(tally, "fabricated_shot_rotations")
     return {"pitch": 0, "yaw": 0, "roll": 0}
 
 
@@ -583,22 +619,27 @@ def _resolve_equippable(net_guid, guid_outer, guid_path, guid_class):
 
 
 def _load_net_guids(export_dir):
-    """Read net_guids.parquet into (guid -> outer, guid -> path) dicts.
+    """Read net_guids.parquet into (guid -> outer, guid -> path, row count).
 
-    Returns empty dicts when the file is absent, so bundles produced by an
-    older vrfkit still convert -- weapon identity is simply left unresolved
-    rather than the run failing.
+    Returns empty dicts and a `None` row count when the file is absent, so
+    bundles produced by an older vrfkit still convert -- weapon identity is
+    simply left unresolved rather than the run failing. `None` rather than 0
+    because "there was no table" and "the table was empty" are different
+    facts, and only the second one can be compared with a declared count.
     """
     path = export_dir / "net_guids.parquet"
     if not path.exists():
-        return {}, {}
+        return {}, {}, None
     table = pq.read_table(path)
     guids = table.column("net_guid").to_pylist()
     paths = table.column("path").cast("string").to_pylist()
     outers = table.column("outer_net_guid").to_pylist()
     guid_outer = {g: o for g, o in zip(guids, outers) if o is not None}
     guid_path = {g: p for g, p in zip(guids, paths) if p}
-    return guid_outer, guid_path
+    # The row count is returned separately from the two dicts: both drop rows
+    # (a null outer, an empty path), so `len(guid_path)` is NOT the table's
+    # height and cannot be compared with what the export manifest declared.
+    return guid_outer, guid_path, len(table)
 
 
 # ---------------------------------------------------------------------------
@@ -701,7 +742,8 @@ _EFFECT_VECTORS = _EffectArraySpec(11, 12, _read_effect_vector)
 _EFFECT_OBJECTS = _EffectArraySpec(15, 16, _read_effect_object)
 
 
-def _decode_effect_elements(data: bytes, bit_count: int, spec: _EffectArraySpec):
+def _decode_effect_elements(data: bytes, bit_count: int, spec: _EffectArraySpec,
+                            tally=None):
     """Decode one effect value array -> list of (tag_index, value) tuples.
 
     ``spec.read_value`` must raise on a short read rather than return a
@@ -709,6 +751,21 @@ def _decode_effect_elements(data: bytes, bit_count: int, spec: _EffectArraySpec)
     handle already stored untouched, and the reader's position is still
     advanced by however much the partial read consumed. Both are relied on by
     the ``consumed``/``skip_bits`` resynchronisation below.
+
+    This is the ONLY decoder for the shot RPC's blobs -- the Rust twin in
+    crates/vrf-decode/src/effect.rs is deliberately not wired up for
+    `ReplayPlayContinuousEffectAtLocation` (see that module's doc comment).
+    Where the Rust decoder rejects a blob outright on a shape it names
+    (`PayloadUnderread`, `PayloadOverread`, `ResidualBits`, ...), this port
+    keeps going and returns what it already decoded -- correct for a shot
+    stream that must not go missing whole, but only if the two shapes that
+    correspond to fabricated *downstream* values are counted rather than
+    absorbed: a (tag, value) pair where one half's read failed (dropped
+    silently by `_decode_effect_blob`, same as a missing `FiringState
+    .AttackVector.N` -- see `spray_control.py`), and bits left over after the
+    element loop ends that are too many to be sub-byte padding (Rust's own
+    `ResidualBits` threshold: more than a byte means the framing did not end
+    where this parse thinks it did).
     """
     r = _BitReader(data, bit_count)
     try:
@@ -764,15 +821,36 @@ def _decode_effect_elements(data: bytes, bit_count: int, spec: _EffectArraySpec)
             if consumed < payload_bits:
                 r.skip_bits(payload_bits - consumed)
         elements[idx] = (tag, val)
+    # Every declared slot with one or both halves still missing -- whether an
+    # index the array never got around to visiting before truncating, or one
+    # that was reached but lost its tag or value mid-read -- is a pair
+    # `_decode_effect_blob` drops silently below. Tallied once, by count, in
+    # one place, rather than re-deriving the same "one half missing" test
+    # (and risking a second, disagreeing count) at every call site.
+    half_read = sum(1 for tag, val in elements if tag is None or val is None)
+    if half_read:
+        _bump(tally, "effect_half_read_pairs", half_read)
+    # Rust's `ResidualBits`: more than a byte of unconsumed window after the
+    # element loop ends -- by a clean terminator, an index/handle out of
+    # range, or simply running out of bits -- means this blob's framing did
+    # not end where this parse thinks it did. Sub-byte padding is normal and
+    # not counted, matching the Rust guard's own tolerance.
+    if r.bits_remaining() > 7:
+        _bump(tally, "effect_array_residual_bits")
     return elements
 
 
 def _decode_effect_blob(blob: _EffectBlob | None, spec: _EffectArraySpec,
-                        tag_table: dict) -> dict:
+                        tag_table: dict, tally=None) -> dict:
     """Decode one effect blob into {tag_name: value}, dropping half-read pairs.
 
     An absent blob and a blob that decodes to nothing are the same thing to
-    every caller: an empty mapping.
+    every caller: an empty mapping. A half-read pair and residual framing bits
+    are NOT the same thing to every caller -- see `_decode_effect_elements`,
+    which tallies both -- so this still drops them from the returned mapping
+    (a `FiringState.AttackVector.N` a caller cannot find is exactly how
+    `_build_shot_event` is meant to notice one is missing) but no longer
+    without a count reaching the summary.
 
     The bit length comes from the parser's `bit_count` column, not from
     `len(data) * 8`. Those two agree on every effect blob measured -- 692,840
@@ -784,7 +862,8 @@ def _decode_effect_blob(blob: _EffectBlob | None, spec: _EffectArraySpec,
     if blob is None:
         return {}
     decoded = {}
-    for tag_idx, val in _decode_effect_elements(blob.data, blob.bit_count, spec):
+    for tag_idx, val in _decode_effect_elements(blob.data, blob.bit_count, spec,
+                                                tally):
         if tag_idx is not None and val is not None:
             decoded[tag_table.get(tag_idx, str(tag_idx))] = val
     return decoded
@@ -872,9 +951,9 @@ def _build_shot_event(
     """
     # Decode blobs: tag_name -> value
     tag_table = ctx.tag_table
-    floats = _decode_effect_blob(blobs.floats, _EFFECT_FLOATS, tag_table)
-    objects = _decode_effect_blob(blobs.objects, _EFFECT_OBJECTS, tag_table)
-    vectors = _decode_effect_blob(blobs.vectors, _EFFECT_VECTORS, tag_table)
+    floats = _decode_effect_blob(blobs.floats, _EFFECT_FLOATS, tag_table, tally)
+    objects = _decode_effect_blob(blobs.objects, _EFFECT_OBJECTS, tag_table, tally)
+    vectors = _decode_effect_blob(blobs.vectors, _EFFECT_VECTORS, tag_table, tally)
 
     # Events with no firing state are emitted too, not filtered out.
     #
@@ -928,7 +1007,7 @@ def _build_shot_event(
 
     # Parse location/rotation from value_str compact format if needed
     loc_obj = _parse_vector_or_zero(location, tally)
-    rot_obj = _parse_rotation(rotation)
+    rot_obj = _parse_rotation(rotation, tally)
 
     # Build attack vectors
     attack_vectors = []
@@ -1357,10 +1436,10 @@ def _group_path_to_class(gp: str) -> str:
     '/Game/GameModes/Bomb/BombPlayerState.BombPlayerState_C').
     For ClassNetCache RPCs, strip the _ClassNetCache suffix to get the class.
     """
-    if '_ClassNetCache' in gp:
+    if CLASS_NET_CACHE_SUFFIX in gp:
         # e.g. '/Script/ShooterGame.DamageableComponent_ClassNetCache'
         # -> '/Script/ShooterGame.DamageableComponent'
-        return gp.replace('_ClassNetCache', '')
+        return gp.replace(CLASS_NET_CACHE_SUFFIX, '')
     return gp
 
 
@@ -1567,18 +1646,156 @@ def _normalize_rpc_param(rpc_name: str, param: str, value, is_raw: bool) -> dict
 # Every phase that appends to `events` is order-sensitive: `events.sort` at the
 # end is stable, so events that tie on (packet_id, time_ms) come out in the
 # order the phases produced them. Keep the phase order (actors, properties,
-# RPCs) and the append order inside each phase.
+# RPCs, server timeline) and the append order inside each phase.
 # ---------------------------------------------------------------------------
-def _write_manifest(manifest: dict, output_dir: Path):
-    """Write the minimal manifest compute_metrics needs."""
+#: Bump when the bundle manifest's shape changes in a way a consumer must
+#: notice. valplay's resume marker records it, so an older bundle is rebuilt
+#: instead of being read under the newer contract.
+#:
+#: 1 -> 2: `quality`, `net_field_export_groups` and `adapter` were added. A
+#: bundle at 1 carries no upstream accounting at all, so a consumer cannot
+#: distinguish "the export was complete" from "nobody counted".
+#:
+#: NOT bumped for `actor_dormant`, deliberately. The version gate in valplay
+#: (`scripts/parse_replays.py`, `ADAPTER_SCHEMA_VERSION`) is an equality check
+#: that REFUSES any bundle whose version it does not match, and
+#: `valplay/tests/ci-stack-smoke.mjs` asserts the built worker image's adapter
+#: constant equals it -- so a bump breaks valplay's CI and refuses every
+#: existing bundle until that repo re-pins `VRFKIT_REF` and rebuilds its worker
+#: image. The version exists to force a rebuild when a bundle would otherwise
+#: be MISREAD, and that is not the case here:
+#:
+#: * `actor_dormant` is an ADDITIVE type. valplay filters events by exact
+#:   `type` equality and keeps no event-type allowlist, so a consumer that does
+#:   not know it simply does not match it -- no crash, no misread.
+#: * Every field on `actor_closed` is unchanged; `actor_event` is added
+#:   alongside them, and an unknown key is ignored by every reader here.
+#: * The change makes existing consumers MORE correct with no edit on their
+#:   side: `actor_closed` stops carrying dormancies, so a spawn/close pairing
+#:   that used to truncate a settled ability's lifetime now leaves that
+#:   instance unpaired instead of wrongly ended.
+#:
+#: What DOES change for valplay is which instances it measures, and this was
+#: MEASURED against its real `compute_ability_detail`, not assumed. On 8 Sage
+#: walls where 6 are destroyed at 3,000ms and 2 settle dormant at 40,000ms:
+#:
+#:   before: instances 8, cap 40,000ms, destroyed 6 (75.0%)
+#:   after : instances 6, cap  3,000ms, destroyed 0 (0.0%)
+#:
+#: Valplay now consumes `actor_dormant` as a right-censored lifetime: a later
+#: real close remains an exact end, while a dormant actor with no close carries
+#: only the observed lower bound and never counts as destroyed. That preserves
+#: this adapter's wire-faithful distinction all the way into the metric instead
+#: of choosing either of the two imperfect measurements above.
+#:
+#: A version bump could not have communicated any of that -- it would only have
+#: refused the bundle outright. Bump this when a bundle would be MISREAD by a
+#: consumer that ignores the change, which is the opposite of this case.
+#:
+#: ``level_names_and_times`` is likewise additive. An older consumer ignores
+#: it and retains its existing event-path fallback; a newer consumer treats an
+#: absent value as unavailable and uses that same fallback. Neither generation
+#: can misread the other one's bundle, so this addition does not justify
+#: refusing every schema-2 bundle already on disk.
+#:
+#: ``server_timeline_event`` is additive for the same reason: older consumers
+#: match exact event types and ignore it, while newer consumers can use the
+#: server-labelled timeline as independent corroboration.  No existing event's
+#: shape or meaning changes.
+BUNDLE_SCHEMA_VERSION = 2
+
+
+def _upstream_row_check(declared, observed) -> dict:
+    """One declared-vs-observed row count, and whether it can be judged.
+
+    `agrees` is `None`, not `True`, when the export declared nothing. An
+    absent declaration is a fact about the export, and reporting it as
+    agreement would let a manifest with no accounting in it certify itself.
+    """
+    return {
+        "declared": declared,
+        "observed": observed,
+        "agrees": None if declared is None else declared == observed,
+    }
+
+
+def _public_level_names(value):
+    """Copy only the public, typed portion of replay level metadata.
+
+    The neighbouring ``game_specific_data`` header can contain account
+    subjects and loadout data, so forwarding the whole header is not an
+    option.  Level roots are independently useful (they are the map URL), but
+    even those cross the adapter seam as an explicit two-field allowlist.
+    """
+    if not isinstance(value, list):
+        return None
+    levels = []
+    for row in value:
+        if not isinstance(row, dict):
+            continue
+        name = row.get("name")
+        time_ms = row.get("time_ms")
+        if not isinstance(name, str) or not name:
+            continue
+        if isinstance(time_ms, bool) or not isinstance(time_ms, int):
+            continue
+        if not 0 <= time_ms <= 0xFFFF_FFFF:
+            continue
+        levels.append({"name": name, "time_ms": time_ms})
+    return levels
+
+
+def _write_manifest(manifest: dict, output_dir: Path, adapter: dict):
+    """Write the bundle manifest, forwarding vrfkit's own accounting.
+
+    Three things cross this seam that used to stop here:
+
+    * ``quality`` -- vrfkit's complete loss/fallback accounting, copied
+      through VERBATIM. Not re-derived, not summarised, not defaulted: the
+      point of forwarding it is that the consumer reads the producer's own
+      numbers, and a value this adapter invented would be the opposite of
+      that. Absent upstream, it is written as ``null`` -- a visible absence,
+      never a plausible zero.
+    * ``net_field_export_groups`` -- the replay's handle -> field-name
+      dictionary, also verbatim. It is the only thing in the export that can
+      turn a wire handle back into a name, and valplay's `_roundinfo` decoder
+      has been naming handles 41-45 from a hardcoded list while citing this
+      table as its source. With the table present the naming becomes a check
+      instead of an assumption.
+    * ``level_names_and_times`` -- the public level roots and their times,
+      copied through a strict two-field allowlist. The first root is the
+      replay's authoritative map URL; unlike event-path inference it is
+      present even when no map actor path reaches the converted event stream.
+    * ``adapter`` -- what THIS process measured, kept in its own object so it
+      can never be mistaken for an upstream figure. It carries the exact
+      identities a consumer can re-verify (line counts) and the declared-vs-
+      observed comparisons this adapter was able to make.
+
+    ``players`` is deliberately NOT forwarded; see the note in `_convert_into`.
+    """
+    quality = manifest.get("quality")
+    groups = manifest.get("net_field_export_groups")
+    levels = _public_level_names(manifest.get("level_names_and_times"))
     out_manifest = {
         "replay_version": manifest.get("replay_version", "unknown"),
-        "duration_ms": manifest.get("duration_ms", 0),
+        # No default: an absent duration_ms is a visible null, not a
+        # fabricated 0 ms match -- see `source_size_bytes` below and the
+        # `quality` note above for the same rule. valplay's
+        # pipeline/metrics/compute_metrics.py reads `duration_ms` with no
+        # default of its own, so a 0 here would ship as a real, plausible
+        # match length instead of surfacing as missing.
+        "duration_ms": manifest.get("duration_ms"),
         "replay_build": manifest.get("replay_build", ""),
         "replay_changelist": manifest.get("replay_changelist", 0),
         "source_file": manifest.get("source_file", ""),
+        "source_size_bytes": manifest.get("source_size_bytes"),
         # Mark as vrfkit-converted
         "converter": "vrfkit/tools/to_valplay_bundle.py",
+        "bundle_schema_version": BUNDLE_SCHEMA_VERSION,
+        "quality": quality if isinstance(quality, dict) else None,
+        "net_field_export_groups": groups if isinstance(groups, list) else None,
+        "level_names_and_times": levels,
+        "adapter": adapter,
     }
     (output_dir / "manifest.json").write_text(
         json.dumps(out_manifest, indent=2), encoding='utf-8'
@@ -1732,6 +1949,11 @@ def _group_rows(cols: _FieldColumns):
     # For RPCs: (packet_id, actor_net_guid, group_path, handle)
     prop_groups = defaultdict(list)
     rpc_groups = defaultdict(list)
+    # Counted, not merely skipped. vrfkit reports the same quantity as
+    # `quality.net.unresolved_rpc_payloads_preserved`; recording this
+    # adapter's own count of the rows it actually saw makes the two
+    # comparable instead of leaving the skip invisible.
+    unresolved_cnc_rows = 0
 
     col_time = cols.time_ms
     col_pid = cols.packet_id
@@ -1743,6 +1965,7 @@ def _group_rows(cols: _FieldColumns):
 
     for i in range(cols.n_rows):
         if col_fn[i] == UNRESOLVED_CLASS_NET_CACHE_PAYLOAD_FIELD_NAME:
+            unresolved_cnc_rows += 1
             continue
 
         actor = col_actor[i]
@@ -1755,7 +1978,7 @@ def _group_rows(cols: _FieldColumns):
             actor_first[actor] = (ms, pid, gp)
         actor_last[actor] = (ms, pid)
 
-        is_rpc = '_ClassNetCache' in gp
+        is_rpc = CLASS_NET_CACHE_SUFFIX in gp
         if is_rpc:
             handle = col_handle[i]
             rpc_groups[(pid, actor, gp, handle)].append(i)
@@ -1765,19 +1988,194 @@ def _group_rows(cols: _FieldColumns):
             # the inventory look like a single slot.
             prop_groups[(pid, actor, col_obj[i], gp)].append(i)
 
-    return actor_first, actor_last, prop_groups, rpc_groups
+    return actor_first, actor_last, prop_groups, rpc_groups, unresolved_cnc_rows
+
+
+#: `actors.event` -> the bundle event type it publishes as. THREE values, not
+#: two: `dormant` is the server suspending replication of an actor that is
+#: still alive, so it is NOT a despawn and must not share a type with one. See
+#: CLAUDE.md ("Dormancy is not destruction; only `close` is a despawn") and
+#: `tools/extract_active_effects.py`, which pairs the same column.
+#:
+#: A value absent from this map is published as `actor_lifecycle_unknown` and
+#: counted, never folded into the nearest known type.
+_ACTOR_EVENT_TYPES = {
+    "close": "actor_closed",
+    "dormant": "actor_dormant",
+}
+
+
+# Event-chunk payload words are NOT self-describing.  This is the same closed
+# vocabulary used by ``crates/vrfkit/src/driver/mod.rs`` after its residual-zero
+# layout check: only these groups have a structurally established word count.
+# An unknown future group still crosses as a labelled timestamp, but none of
+# its payload words are assigned a meaning here.
+_SERVER_TIMELINE_WORD_COUNTS = {
+    "characterDeath": 2,
+    "characterUltimateUsed": 1,
+    "roundStarted": 1,
+    "switchTeams": 1,
+    "spikePlanted": 0,
+    "spikeDefused": 0,
+    "spikeExploded": 0,
+}
+
+# Structural Event-payload values measured over all 109,126 Event chunks in
+# the 527-replay, three-build corpus. These are public Unreal enum constants,
+# not replay-provided identities. The adapter rechecks them rather than trusting
+# an arbitrary Parquet string before allowing `payload_name` across the privacy
+# seam. Tag and seconds travel only when the whole tuple agrees; partial or
+# third-party rows fall back to the already-public group/times/words.
+_SERVER_TIMELINE_PAYLOAD_TAGS = {
+    "characterDeath": 8,
+    "characterUltimateUsed": 11,
+    "roundStarted": 2,
+    "switchTeams": 3,
+    "spikePlanted": 4,
+    "spikeDefused": 5,
+    "spikeExploded": 6,
+}
+_SERVER_TIMELINE_PAYLOAD_NAMES = {
+    "characterDeath": "EReplayEventGroup::CharacterDeath",
+    "characterUltimateUsed": "EReplayEventGroup::CharacterUltimateUsed",
+    "roundStarted": "EReplayEventGroup::RoundStart",
+    "switchTeams": "EReplayEventGroup::SwitchTeams",
+    "spikePlanted": "EReplayEventGroup::SpikePlanted",
+    "spikeDefused": "EReplayEventGroup::SpikeDefused",
+    "spikeExploded": "EReplayEventGroup::SpikeExploded",
+}
+EVENT_PAYLOAD_TIME_TOLERANCE_MS = 1.001
+
+
+class _PacketTimeIndex:
+    """Place packet-less Event chunks among packet-addressed replication rows.
+
+    Event chunks carry authoritative replay-relative times but no packet id;
+    the rest of ``events.ndjson`` is sorted in packet order because that is the
+    wire order.  For each event time we therefore use the largest packet id
+    observed at or before that time.  The prefix maximum keeps the derived key
+    monotone even if one malformed frame made a later packet report an earlier
+    timestamp -- the existing regression counter remains responsible for
+    surfacing that damaged time axis.
+
+    This key is ordering metadata only.  It is never published as if the Event
+    chunk itself declared a packet association.
+    """
+
+    def __init__(self, cols: "_FieldColumns"):
+        max_packet_at_time = {}
+        for time_ms, packet_id in zip(cols.time_ms, cols.packet_id):
+            previous = max_packet_at_time.get(time_ms)
+            if previous is None or packet_id > previous:
+                max_packet_at_time[time_ms] = packet_id
+        self.times = sorted(max_packet_at_time)
+        self.prefix_max_packets = []
+        highest = 0
+        for time_ms in self.times:
+            highest = max(highest, max_packet_at_time[time_ms])
+            self.prefix_max_packets.append(highest)
+
+    def packet_at_or_before(self, time_ms: int) -> int:
+        index = bisect_right(self.times, time_ms) - 1
+        return self.prefix_max_packets[index] if index >= 0 else 0
+
+
+def _build_server_timeline_events(export_dir: Path, cols: "_FieldColumns",
+                                  verbose: bool) -> tuple[list, int | None]:
+    """Publish the Event-chunk timeline through a privacy-safe allowlist.
+
+    ``events.parquet`` also holds a replay-scoped id, free-form metadata and
+    the original payload bytes. Any of those may contain account or match
+    identifiers, so none crosses this adapter seam. The structural payload
+    FString crosses only when it equals the fixed public enum constant for the
+    group and its tag/time tuple also matches the measured layout. Older
+    Parquet schemas simply omit those additive columns.
+
+    Returns ``(events, rows_read)``.  ``None`` means the table was absent;
+    zero means it was present and empty.  That distinction is needed for the
+    producer-declared row-count reconciliation in the bundle manifest.
+    """
+    path = export_dir / "events.parquet"
+    if not path.exists():
+        return [], None
+
+    table = pq.read_table(path)
+    groups = _dict_column_to_pylist(table.column("group"))
+    time1 = _numeric_column_to_pylist(table.column("time1"))
+    time2 = _numeric_column_to_pylist(table.column("time2"))
+    word0 = _nullable_numeric_to_pylist(table.column("word0"))
+    word1 = _nullable_numeric_to_pylist(table.column("word1"))
+    row_count = len(table)
+    payload_tag = (
+        _nullable_numeric_to_pylist(table.column("payload_tag"))
+        if "payload_tag" in table.column_names else [None] * row_count
+    )
+    payload_name = (
+        table.column("payload_name").to_pylist()
+        if "payload_name" in table.column_names else [None] * row_count
+    )
+    payload_seconds = (
+        _nullable_numeric_to_pylist(table.column("payload_seconds"))
+        if "payload_seconds" in table.column_names else [None] * row_count
+    )
+    packet_index = _PacketTimeIndex(cols)
+    events = []
+
+    for (group, first_time, second_time, first_word, second_word, tag,
+         payload_enum_name, seconds) in zip(
+        groups, time1, time2, word0, word1, payload_tag, payload_name,
+        payload_seconds
+    ):
+        event = {
+            "type": "server_timeline_event",
+            "time_ms": first_time,
+            "time2_ms": second_time,
+            "event_group": group,
+        }
+        word_count = _SERVER_TIMELINE_WORD_COUNTS.get(group, 0)
+        if word_count >= 1 and first_word is not None:
+            event["word0"] = first_word
+        if word_count >= 2 and second_word is not None:
+            event["word1"] = second_word
+        expected_tag = _SERVER_TIMELINE_PAYLOAD_TAGS.get(group)
+        expected_name = _SERVER_TIMELINE_PAYLOAD_NAMES.get(group)
+        seconds_matches = (
+            seconds is not None
+            and math.isfinite(seconds)
+            and abs(seconds * 1000.0 - first_time)
+            <= EVENT_PAYLOAD_TIME_TOLERANCE_MS
+        )
+        if (
+            expected_tag is not None
+            and tag == expected_tag
+            and payload_enum_name == expected_name
+            and seconds_matches
+        ):
+            event["payload_tag"] = tag
+            event["payload_name"] = payload_enum_name
+            event["payload_seconds"] = _f32_shortest(seconds)
+        events.append((packet_index.packet_at_or_before(first_time), first_time, event))
+
+    if verbose:
+        print(f"  {len(events):,} server timeline events from events.parquet")
+    return events, len(table)
 
 
 def _build_actor_events(export_dir: Path, actor_first: dict, actor_last: dict,
-                        verbose: bool):
-    """Build actor_spawned / actor_closed events.
+                        verbose: bool, tally: "_Tally"):
+    """Build actor_spawned / actor_closed / actor_dormant events.
 
     Returns ``(events, guid_class)``. `guid_class` maps an actor GUID to its
     spawn class path and is filled from the same pass, because the shot events
     built later need it for weapon identity.
+
+    `tally` is required, not optional: the unknown-lifecycle-value counter is
+    the only thing that distinguishes "this export used the three values this
+    adapter knows" from "a fourth appeared and was published as an unknown".
     """
     events = []
     guid_class = {}  # actor net guid -> spawn class path
+    actor_event_counts = Counter()
 
     # actors.parquet is authoritative: it carries class/archetype/location from
     # the spawn data itself.
@@ -1794,6 +2192,9 @@ def _build_actor_events(export_dir: Path, actor_first: dict, actor_last: dict,
         a_sx = actors_table.column('spawn_x').to_pylist()
         a_sy = actors_table.column('spawn_y').to_pylist()
         a_sz = actors_table.column('spawn_z').to_pylist()
+        a_spitch = actors_table.column('spawn_pitch').to_pylist()
+        a_syaw = actors_table.column('spawn_yaw').to_pylist()
+        a_sroll = actors_table.column('spawn_roll').to_pylist()
 
         for i in range(len(actors_table)):
             if a_event[i] == 'open':
@@ -1814,6 +2215,24 @@ def _build_actor_events(export_dir: Path, actor_first: dict, actor_last: dict,
                     _f32_shortest(a_sy[i]) if a_sy[i] is not None else 0,
                     _f32_shortest(a_sz[i]) if a_sz[i] is not None else 0,
                 ) if has_loc else None
+                # Spawn rotation is independent of spawn location: a static
+                # actor can omit both, while a dynamic projectile may carry a
+                # direction even when its position is the origin.  Preserve
+                # that distinction and never fabricate a zero rotation for a
+                # row whose three nullable wire columns are all absent.
+                has_rotation = (
+                    a_spitch[i] is not None
+                    or a_syaw[i] is not None
+                    or a_sroll[i] is not None
+                )
+                rotation = {
+                    axis: _f32_shortest(value) if value is not None else 0
+                    for axis, value in (
+                        ("pitch", a_spitch[i]),
+                        ("yaw", a_syaw[i]),
+                        ("roll", a_sroll[i]),
+                    )
+                } if has_rotation else None
                 class_path = a_class[i]
                 if class_path:
                     # First open wins: a GUID can be reused after a close, but
@@ -1832,21 +2251,64 @@ def _build_actor_events(export_dir: Path, actor_first: dict, actor_last: dict,
                     "type": "actor_spawned",
                     "time_ms": a_time[i],
                     "actor_net_guid": a_guid[i],
+                    "channel": a_chan[i],
                     "replication_class_path": _to_package_path(class_path) if class_path else None,
                     "archetype_path": archetype,
                     "location": location,
+                    "rotation": rotation,
                 }
                 events.append((a_pid[i], a_time[i], event))
             else:
+                # `actors.event` has THREE values -- open / close / dormant --
+                # and this was an `else`, so every dormant row published as
+                # `actor_closed`. Dormancy is the server stopping replication
+                # of an actor that is STILL ALIVE, which for a settled smoke,
+                # wall or trap is its normal steady state; valplay reads
+                # `actor_closed` as a despawn (pipeline/metrics/
+                # ability_detail.py pairs spawn/close into a lifetime), so a
+                # settled ability read as destroyed with its lifetime
+                # truncated to the moment it stopped moving.
+                #
+                # `tools/extract_active_effects.py` in this same directory
+                # already gets this right and says why. This is that reasoning
+                # applied one hop later, at the last seam before the data is
+                # consumed.
+                #
+                # WHY a distinct type rather than a flag on `actor_closed`:
+                # valplay filters events by exact `type` equality and has no
+                # event-type allowlist, so a new type is ignored by consumers
+                # that do not know it while `actor_closed` immediately stops
+                # over-reporting despawns. A flag would leave every existing
+                # consumer reading dormancy as destruction until valplay
+                # changed in lockstep. See BUNDLE_SCHEMA_VERSION for why this
+                # is not a version bump.
+                raw_event = a_event[i]
+                event_type = _ACTOR_EVENT_TYPES.get(raw_event)
+                if event_type is None:
+                    # A fourth value the parser learned and this adapter has
+                    # not. Defaulting it to a despawn is the bug above; it is
+                    # published under its own type carrying the raw value, and
+                    # counted, so it is a visible unknown rather than a
+                    # plausible close.
+                    tally.bump("unknown_actor_lifecycle_events")
+                    event_type = "actor_lifecycle_unknown"
+                actor_event_counts[event_type] += 1
                 event = {
-                    "type": "actor_closed",
+                    "type": event_type,
                     "time_ms": a_time[i],
                     "actor_net_guid": a_guid[i],
+                    "channel": a_chan[i],
+                    # The wire's own value, forwarded so a consumer can audit
+                    # the mapping above instead of trusting this adapter's
+                    # choice of type name.
+                    "actor_event": raw_event,
                 }
                 events.append((a_pid[i], a_time[i], event))
 
         if verbose:
             print(f"  {len(actors_table):,} actor lifecycle events from actors.parquet")
+            for name, count in sorted(actor_event_counts.items()):
+                print(f"    {name}: {count:,}")
     else:
         # Fallback: infer from first/last field appearance (legacy behavior)
         for actor, (ms, pid, gp) in actor_first.items():
@@ -1862,13 +2324,22 @@ def _build_actor_events(export_dir: Path, actor_first: dict, actor_last: dict,
             }
             events.append((pid, ms, event))
 
+        # This branch infers lifetimes from the first and last field row for
+        # each actor because actors.parquet is absent, so there is no `event`
+        # column and no dormancy information AT ALL -- the last field row is
+        # the last time the actor was seen, whatever the reason. `actor_event`
+        # is therefore null rather than "close": this path cannot tell a
+        # despawn from a dormancy, and claiming either would be inventing the
+        # distinction the actors.parquet branch above exists to preserve.
         for actor, (ms, pid) in actor_last.items():
             event = {
                 "type": "actor_closed",
                 "time_ms": ms,
                 "actor_net_guid": actor,
+                "actor_event": None,
             }
             events.append((pid + 1, ms, event))
+            actor_event_counts["actor_closed"] += 1
 
     return events, guid_class
 
@@ -2119,10 +2590,36 @@ def _build_rpc_events(cols: _FieldColumns, rpc_groups: dict,
     return events, shot_count, resolved_weapon_count
 
 
-def _write_events(events: list, output_dir: Path, verbose: bool) -> int:
+def _write_events(events: list, output_dir: Path, verbose: bool) -> tuple[int, int]:
     """Sort by (packet_id, time_ms) and write events.ndjson.
 
-    The sort is stable, so ties keep the order the phases appended them in.
+    Returns ``(events_written, time_ms_regressions)``.
+
+    # The ordering contract this file owns
+
+    `packet_id` is the replay's own global packet counter and is the only
+    total order the wire actually provides: vrfkit stamps it from a
+    monotonically increasing driver counter (`driver/mod.rs`, `total_packets`)
+    and never sorts, so append order IS packet order. Sorting on it here is
+    therefore a re-assertion, not a reordering, and the sort is stable, so
+    events tying on `(packet_id, time_ms)` keep the order the phases appended
+    them in -- actors, then properties, then RPCs, and inside each phase the
+    insertion order of the grouping dicts, which is the row order of
+    fields.parquet, which is wire order.
+
+    `time_ms` is NOT part of that guarantee and must not be treated as one.
+    It is derived per demo frame from a raw `read_f32` with no validation
+    (`vrf-frame/src/lib.rs`), and a frame whose time is not finite yields
+    `time_ms = 0`. A single such frame mid-replay makes `time_ms`
+    non-monotonic in file order.
+
+    That matters downstream: valplay orders same-millisecond events by
+    `(time_ms, line_index)`, which is a sound total order only while `time_ms`
+    is non-decreasing in file order. So the regression is COUNTED here rather
+    than repaired -- repairing it would mean reordering away from packet
+    order, i.e. away from the wire -- and the count is published in the bundle
+    manifest so the consumer can see that its tie-break is standing on sand
+    instead of assuming it is not.
     """
     t0 = time.time()
     if verbose:
@@ -2130,21 +2627,36 @@ def _write_events(events: list, output_dir: Path, verbose: bool) -> int:
     events.sort(key=lambda x: (x[0], x[1]))
 
     events_written = 0
+    regressions = 0
+    previous_ms = None
     encode = _JSON.encode
     with open(output_dir / "events.ndjson", 'w', encoding='utf-8') as f:
         write = f.write
-        for _, _, evt in events:
+        for _, time_ms, evt in events:
+            if previous_ms is not None and time_ms < previous_ms:
+                regressions += 1
+            previous_ms = time_ms
             write(encode(evt))
             write('\n')
             events_written += 1
 
     if verbose:
         print(f"  {events_written:,} events written in {time.time()-t0:.1f}s")
-    return events_written
+        if regressions:
+            print(f"  {regressions:,} time_ms regressions in written order")
+    return events_written, regressions
 
 
-def _write_movement(movement_path: Path, output_dir: Path, verbose: bool) -> int:
-    """Write movement.ndjson, keeping the last sub-move per (packet, character)."""
+def _write_movement(movement_path: Path, output_dir: Path, verbose: bool) -> tuple:
+    """Write movement.ndjson, keeping the last sub-move per (packet, character).
+
+    Returns ``(rows_read, rows_written)``. They differ by the intra-packet
+    sub-move collapse below, so only `rows_read` can be compared with what the
+    export manifest declared; publishing `rows_written` against
+    `quality.movement_rows` would report every healthy replay as lossy.
+    `rows_read` is `None` when the table is absent, which is a different fact
+    from an empty one.
+    """
     if not movement_path.exists():
         # Truncate rather than return. `convert` reuses an existing output
         # directory, so converting a replay with no movement table over an
@@ -2156,7 +2668,7 @@ def _write_movement(movement_path: Path, output_dir: Path, verbose: bool) -> int
         (output_dir / "movement.ndjson").write_text("", encoding='utf-8')
         if verbose:
             print("  movement.parquet not found, movement.ndjson written empty")
-        return 0
+        return None, 0
 
     t0 = time.time()
     if verbose:
@@ -2287,7 +2799,7 @@ def _write_movement(movement_path: Path, output_dir: Path, verbose: bool) -> int
 
     if verbose:
         print(f"  {movement_written:,} movement rows written in {time.time()-t0:.1f}s")
-    return movement_written
+    return n_mv, movement_written
 
 
 # ---------------------------------------------------------------------------
@@ -2319,7 +2831,17 @@ def _convert_into(export_dir: Path, output_dir: Path, *, verbose: bool = False):
         manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
     else:
         tally.bump("missing_manifest")
-    _write_manifest(manifest, output_dir)
+    # The bundle manifest is written LAST, once the counts it has to carry
+    # exist. It used to be written here, before a single row had been read,
+    # which is why it could only ever carry header scalars.
+    upstream_quality = manifest.get("quality")
+    if not isinstance(upstream_quality, dict):
+        # An export with no quality accounting is not a lossy conversion --
+        # older vrfkit builds emitted none and this run dropped nothing -- so
+        # it is deliberately NOT counted in the tally. It is still visible: the
+        # manifest publishes `"quality": null`, which says "nobody counted"
+        # rather than the plausible zero that would say "nothing was lost".
+        upstream_quality = None
 
     # ---- Load fields.parquet ----
     cols = _load_field_columns(fields_path, verbose)
@@ -2330,7 +2852,8 @@ def _convert_into(export_dir: Path, output_dir: Path, *, verbose: bool = False):
     t0 = time.time()
     if verbose:
         print("Grouping rows into events...")
-    actor_first, actor_last, prop_groups, rpc_groups = _group_rows(cols)
+    (actor_first, actor_last, prop_groups, rpc_groups,
+     unresolved_cnc_rows) = _group_rows(cols)
     if verbose:
         print(f"  {len(prop_groups):,} property events, {len(rpc_groups):,} RPC invocations")
         print(f"  Grouped in {time.time()-t0:.1f}s")
@@ -2342,11 +2865,11 @@ def _convert_into(export_dir: Path, output_dir: Path, *, verbose: bool = False):
 
     # Containment chain for weapon identity. Loaded before the actor pass so
     # guid_class can be filled from the same loop that emits actor_spawned.
-    guid_outer, guid_path = _load_net_guids(export_dir)
+    guid_outer, guid_path, net_guid_rows_read = _load_net_guids(export_dir)
 
     # 1 & 2. actor_spawned and actor_closed
     events, guid_class = _build_actor_events(
-        export_dir, actor_first, actor_last, verbose
+        export_dir, actor_first, actor_last, verbose, tally
     )
 
     # 3. export_group_received events (replicated properties)
@@ -2368,6 +2891,16 @@ def _convert_into(export_dir: Path, output_dir: Path, *, verbose: bool = False):
     )
     events += rpc_events
 
+    # 5. The server's own labelled Event-chunk timeline.  Its rows have no
+    # packet id, so _build_server_timeline_events derives a private sort key
+    # from the replication time index and publishes only group/time plus the
+    # fixed-layout words Rust already validated.  Event id, metadata and raw
+    # payload never cross the adapter seam.
+    timeline_events, server_timeline_rows_read = _build_server_timeline_events(
+        export_dir, cols, verbose
+    )
+    events += timeline_events
+
     # Only now is it known whether the empty tag table cost anything: a replay
     # with no shots loses nothing by having no tag names, and counting it
     # there would cry wolf.
@@ -2381,10 +2914,72 @@ def _convert_into(export_dir: Path, output_dir: Path, *, verbose: bool = False):
         print(f"  {resolved_weapon_count:,} with a resolved weapon ({pct:.2f}%)")
 
     # ---- Sort by (packet_id, time_ms) and write ----
-    events_written = _write_events(events, output_dir, verbose)
+    events_written, time_ms_regressions = _write_events(events, output_dir, verbose)
+    if time_ms_regressions:
+        # Not a conversion loss -- every event is still written -- but it
+        # invalidates the (time_ms, line index) tie-break the consumer uses,
+        # so it is surfaced with the losses rather than buried in the manifest.
+        tally.bump("events_time_ms_regressions", time_ms_regressions)
 
     # ---- Convert movement.parquet ----
-    movement_written = _write_movement(movement_path, output_dir, verbose)
+    movement_rows_read, movement_written = _write_movement(
+        movement_path, output_dir, verbose
+    )
+
+    # ---- Cross-check what vrfkit declared against what was actually read ----
+    #
+    # Only exact table-height identities are judged. `quality.movement_rows`,
+    # `quality.net_guid_rows` and `quality.event_rows` are the row counts of the
+    # tables vrfkit wrote, so they must equal the heights this adapter reads
+    # back. `quality.net.fields`
+    # is NOT such an identity -- fields.parquet carries flattened array leaves,
+    # struct sub-fields and preservation rows on top of the wire fields
+    # (1,277,658 rows against 429,637 fields on the 02d4d478 reference) -- so it
+    # is recorded, never compared. Asserting an equality that does not hold
+    # would put a permanent false alarm in front of every run, and a false alarm
+    # is how a real one stops being read.
+    declared = upstream_quality or {}
+    upstream_row_counts = {
+        "movement_rows": _upstream_row_check(
+            declared.get("movement_rows"), movement_rows_read
+        ),
+        "net_guid_rows": _upstream_row_check(
+            declared.get("net_guid_rows"), net_guid_rows_read
+        ),
+        "event_rows": _upstream_row_check(
+            declared.get("event_rows"), server_timeline_rows_read
+        ),
+    }
+    disagreements = sum(
+        1 for check in upstream_row_counts.values() if check["agrees"] is False
+    )
+    if disagreements:
+        # The export's own manifest does not describe the tables sitting next
+        # to it. Which of the two is wrong is not knowable here, so nothing is
+        # repaired and nothing is refused: the disagreement is counted, and the
+        # consumer decides what a bundle whose producer contradicts itself is
+        # allowed to publish.
+        tally.bump("upstream_row_count_disagreement", disagreements)
+
+    adapter_accounting = {
+        "schema_version": BUNDLE_SCHEMA_VERSION,
+        "events_written": events_written,
+        "events_time_ms_regressions": time_ms_regressions,
+        "movement_rows_read": movement_rows_read,
+        "movement_rows_written": movement_written,
+        "net_guid_rows_read": net_guid_rows_read,
+        "server_timeline_rows_read": server_timeline_rows_read,
+        "server_timeline_events_written": len(timeline_events),
+        "field_rows_read": cols.n_rows,
+        "field_rows_unresolved_class_net_cache": unresolved_cnc_rows,
+        "upstream_row_counts": upstream_row_counts,
+        # Every conversion loss this run recorded, printed below as well.
+        # Written even when empty: `{}` says the counters ran and found
+        # nothing, where an absent key would not distinguish that from a run
+        # that never counted.
+        "losses": dict(tally),
+    }
+    _write_manifest(manifest, output_dir, adapter_accounting)
 
     # ---- Summary ----
     #

@@ -36,11 +36,11 @@ SOFTWARE.
 
 | Area | Relationship |
 |---|---|
-| `crates/vrf-transform` | The five `release-*` per-build payload transforms and their constants are a port of `Replay.Encoding/PayloadEncryption`. The substitution tables and those builds' golden test vectors are extracted mechanically from that source (`tools/extract_sboxes.py`, `tools/extract_golden.py`). |
+| `crates/vrf-transform` | The shared payload-transform framework and six global per-build implementations are ports of `Replay.Encoding/PayloadEncryption`; substitution tables and global golden vectors are extracted mechanically from that source (`tools/extract_sboxes.py`, `tools/extract_golden.py`). Regional provenance is stated separately below. |
 | `crates/vrf-bitio` | The Unreal wire primitives (`IntPacked`, bounded `SerializedInt`, `FString`, bit copying) follow the semantics implemented in `Replay.Encoding/Archives`. |
 
-The reverse engineering of VALORANT's payload transformation originates with that
-project; this repository reimplements the result rather than rediscovering it.
+The payload-transform framework and the reverse-engineering approach originate
+with that project; this repository reimplements and extends the result.
 
 ## ValorantReplayParser -- LeagueTavern fork
 

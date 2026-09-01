@@ -61,8 +61,19 @@ pub struct NetStats {
     pub unfinished_partials: u64,
     /// Bits buffered by those unfinished partial bunches, and therefore lost.
     ///
-    /// Kept out of [`Self::skipped_bits`], which is the content-block tally the
-    /// oracle divides by failed blocks; these bits never reached framing.
+    /// Kept out of [`Self::skipped_bits`] -- but NOT because these bits never
+    /// reached framing; two other partial-reassembly discards (an overlapping
+    /// or out-of-sequence fragment rejected by `validate_sequence`, and a
+    /// channel destroyed with a reassembly still buffered) never reach framing
+    /// either, and both ARE added to `skipped_bits`, at the moment each is
+    /// discarded. The real distinction is *when* the loss becomes attributable:
+    /// those two are conclusive the instant they happen, during a specific
+    /// bunch's processing, same as any other framing loss `skipped_bits`
+    /// tallies. This field is not -- an in-progress reassembly is
+    /// indistinguishable from one still awaiting its next fragment until the
+    /// stream ends, so it cannot be charged to `skipped_bits` (which the
+    /// oracle divides by failed *blocks*, block by block) before then. It is
+    /// summed here, separately, only by [`crate::ReplicationReader::finish`].
     pub unfinished_partial_bits: u64,
     /// Bunch payloads whose header parse failed -- package-map exports,
     /// must-be-mapped GUIDs, or the channel-open block. The prior code did
@@ -85,6 +96,19 @@ pub struct NetStats {
     pub rpcs: u64,
     /// Bits skipped due to malformed content block payloads.
     pub skipped_bits: u64,
+    /// A content block's header, or its `content_bits` IntPacked field, could
+    /// not be read at all -- the two failure depths in `frame_content_blocks`
+    /// that ran before `malformed_content_blocks` or any other block-level
+    /// counter could apply. Both abandon the rest of the bunch (`skip_remaining`),
+    /// same loss as [`Self::malformed_content_blocks`], just one layer earlier;
+    /// counted here for the same reason that one is counted, and included in
+    /// [`Self::lost_content_blocks`] so `verdict_from_stats` can see it. Before
+    /// this existed, a build that shifted the header or `content_bits` grammar
+    /// by one bit moved `skipped_bits` and a diagnostics-only event (gated
+    /// behind `--diagnostics`, capped, and never read by the verdict) with
+    /// every other block-level counter left at zero -- a structurally
+    /// undetectable loss.
+    pub content_block_framing_failures: u64,
     /// Malformed content block payloads (overrun).
     pub malformed_content_blocks: u64,
     /// Content blocks whose payload transform or bit copy failed.
@@ -157,7 +181,8 @@ pub struct NetStats {
     /// Detailed diagnostic events for every skip/malformed occurrence, capped
     /// at [`MAX_DIAGNOSTIC_EVENTS`].
     ///
-    /// This is the primary debugging tool when the oracle pass rate is not 100%.
+    /// This is the primary debugging tool when the oracle pass rate is not 100%
+    /// or the validation verdict reports another ReplayData failure.
     /// Each event records the full context needed to locate the failure in the
     /// replay stream and compare with the C# reference parser.
     #[cfg(feature = "diagnostics")]
@@ -194,6 +219,7 @@ impl NetStats {
         self.fields += other.fields;
         self.rpcs += other.rpcs;
         self.skipped_bits += other.skipped_bits;
+        self.content_block_framing_failures += other.content_block_framing_failures;
         self.malformed_content_blocks += other.malformed_content_blocks;
         self.transform_failures += other.transform_failures;
         self.field_stream_failures += other.field_stream_failures;
@@ -217,6 +243,43 @@ impl NetStats {
             self.diagnostics_dropped += other.diagnostics_dropped + other.diagnostics.len() as u64;
             other.diagnostics.clear();
         }
+    }
+
+    /// Content blocks whose payload never reached the exported tables.
+    ///
+    /// A block can fail at four different depths and only counting the
+    /// shallowest would overstate the verdict: framing can look fine while the
+    /// payload inside is unreadable. This is the single number that answers
+    /// "did anything get lost", and it is deliberately NOT the same thing as
+    /// the oracle's pass rate.
+    ///
+    /// `rpc_stream_failures` is netted against
+    /// `unresolved_rpc_payloads_preserved` because an unresolved
+    /// ClassNetCache block is not a loss: its whole payload is exported as one
+    /// reserved row (see `UNRESOLVED_CLASS_NET_CACHE_PAYLOAD_FIELD_NAME` in
+    /// `vrf-export`), so the bits are still on disk even though no handle
+    /// could be named. On the 02d4d478 reference that netting separates 7,889
+    /// unattributed blocks from 0 lost ones. Older, pre-preservation-aware
+    /// output scored that shape as 98.94%; the current oracle correctly reports
+    /// 100% while still exposing the unresolved/raw counter.
+    ///
+    /// `saturating_sub` rather than `-`: the two counters are incremented on
+    /// different code paths, and a future path that preserves a payload
+    /// without counting the failure must not make this wrap to 18 quintillion.
+    ///
+    /// Consumers downstream of the export read this through
+    /// `manifest.json` -> `quality.content_blocks_lost`. Non-zero means the
+    /// published tables are missing replicated state, so any coverage claim
+    /// derived by recounting them is an undercount of unknown size.
+    pub fn lost_content_blocks(&self) -> u64 {
+        let rpc_payloads_lost = self
+            .rpc_stream_failures
+            .saturating_sub(self.unresolved_rpc_payloads_preserved);
+        self.content_block_framing_failures
+            + self.malformed_content_blocks
+            + self.transform_failures
+            + self.field_stream_failures
+            + rpc_payloads_lost
     }
 
     /// Record one diagnostic event, or count it as dropped if the log is full.
@@ -345,6 +408,123 @@ impl From<&ContentBlockHeader> for ContentBlockHeaderSnapshot {
     }
 }
 
+/// Tests for the loss accounting, which does not depend on `diagnostics`.
+///
+/// A separate module because the older `tests` module below is gated on that
+/// feature, and `lost_content_blocks` is read by the manifest on every build.
+#[cfg(test)]
+mod loss_tests {
+    use super::*;
+
+    /// Each of the four depths counts, and they add rather than mask.
+    #[test]
+    fn every_failure_depth_reaches_the_loss_total() {
+        for (label, stats) in [
+            (
+                "malformed framing",
+                NetStats {
+                    malformed_content_blocks: 3,
+                    ..NetStats::default()
+                },
+            ),
+            (
+                "transform failed",
+                NetStats {
+                    transform_failures: 3,
+                    ..NetStats::default()
+                },
+            ),
+            (
+                "field stream failed",
+                NetStats {
+                    field_stream_failures: 3,
+                    ..NetStats::default()
+                },
+            ),
+            (
+                "rpc payload lost",
+                NetStats {
+                    rpc_stream_failures: 3,
+                    ..NetStats::default()
+                },
+            ),
+        ] {
+            assert_eq!(
+                stats.lost_content_blocks(),
+                3,
+                "{label} must reach the loss total on its own"
+            );
+        }
+
+        let all_four = NetStats {
+            malformed_content_blocks: 1,
+            transform_failures: 2,
+            field_stream_failures: 4,
+            rpc_stream_failures: 8,
+            ..NetStats::default()
+        };
+        assert_eq!(
+            all_four.lost_content_blocks(),
+            15,
+            "the four depths add; a total that matches one of them alone would hide the rest"
+        );
+    }
+
+    /// The reference-replay shape: 7,889 blocks could not be attributed to a
+    /// group, and every one of their payloads was preserved as a reserved row.
+    /// Nothing was lost, so both the loss total and current oracle failure count
+    /// are zero. The formerly reported 98.94% score is historical.
+    #[test]
+    fn preserved_unresolved_rpc_payloads_are_not_a_loss() {
+        let stats = NetStats {
+            rpc_stream_failures: 7889,
+            unresolved_rpc_payloads_preserved: 7889,
+            ..NetStats::default()
+        };
+        assert_eq!(stats.lost_content_blocks(), 0);
+
+        let partly_preserved = NetStats {
+            rpc_stream_failures: 7889,
+            unresolved_rpc_payloads_preserved: 7000,
+            ..NetStats::default()
+        };
+        assert_eq!(
+            partly_preserved.lost_content_blocks(),
+            889,
+            "a failure whose payload was NOT preserved is a real loss"
+        );
+    }
+
+    /// The counters are incremented on different paths. More preserved than
+    /// failed must read as zero loss, never as a wrapped u64.
+    #[test]
+    fn more_preserved_than_failed_does_not_wrap() {
+        let stats = NetStats {
+            rpc_stream_failures: 1,
+            unresolved_rpc_payloads_preserved: 5,
+            ..NetStats::default()
+        };
+        assert_eq!(stats.lost_content_blocks(), 0);
+    }
+
+    /// Counters that are loud but normal must NOT be mistaken for loss. On the
+    /// 02d4d478 reference `skipped_bits` is 19 135 006 and the export is
+    /// complete; a definition that included them would report every healthy
+    /// replay as lossy and the signal would be discarded as noise.
+    #[test]
+    fn normal_noise_counters_are_not_loss() {
+        let stats = NetStats {
+            skipped_bits: 19_135_006,
+            partial_fragments: 4096,
+            deleted_blocks: 128,
+            actor_closes: 1799,
+            must_be_mapped_guids: 64,
+            ..NetStats::default()
+        };
+        assert_eq!(stats.lost_content_blocks(), 0);
+    }
+}
+
 #[cfg(all(test, feature = "diagnostics"))]
 mod tests {
     use super::*;
@@ -432,6 +612,7 @@ mod tests {
             fields: 14,
             rpcs: 15,
             skipped_bits: 16,
+            content_block_framing_failures: 34,
             malformed_content_blocks: 17,
             transform_failures: 18,
             field_stream_failures: 19,
@@ -471,6 +652,7 @@ mod tests {
         assert_eq!(totals.fields, 28);
         assert_eq!(totals.rpcs, 30);
         assert_eq!(totals.skipped_bits, 32);
+        assert_eq!(totals.content_block_framing_failures, 68);
         assert_eq!(totals.malformed_content_blocks, 34);
         assert_eq!(totals.transform_failures, 36);
         assert_eq!(totals.field_stream_failures, 38);

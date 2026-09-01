@@ -22,7 +22,8 @@
 //!
 //! When the transform is wrong, `IntPacked` returns nonsense (enormous handles
 //! or payload sizes) or the total consumed bits don't match the declared block
-//! size. A correct transform yields ~100% pass rate; an incorrect one yields ~0%.
+//! size. A correct transform with lossless unresolved-payload preservation yields
+//! 100%; an incorrect one collapses toward 0%.
 //!
 //! This oracle uses every `ReplicationReader` counter that means bytes present
 //! in ReplayData could not be consumed: packet/header/framing failures,
@@ -31,6 +32,12 @@
 //! ClassNetCache table is reported separately when the sink retained the whole
 //! decoded block; unsupported attribution with a recoverable raw payload is not
 //! treated as data loss.
+//!
+//! The current machine-local sweep on 2026-08-31 validates 527/527 replays at
+//! 100.000000%: 215 release-13.01, 204 release-13.02 and 108 release-13.04,
+//! covering 344,569,357 content blocks with zero malformed framing. This is a
+//! losslessness result, not a claim that every raw preservation row has a known
+//! property type.
 //!
 //! # Diagnostics
 //!
@@ -231,6 +238,7 @@ fn verdict_from_stats(stats: &NetStats, replay_data_trailing_bytes: u64) -> Verd
         + stats.channel_state_limit_failures
         + stats.partial_resource_limit_failures
         + stats.bunch_header_failures
+        + stats.content_block_framing_failures
         + stats.malformed_content_blocks
         + stats.transform_failures
         + stats.field_stream_failures
@@ -323,15 +331,15 @@ pub fn run(
     let class_net = stats.class_net_cache_blocks;
     let malformed = stats.malformed_content_blocks;
     let deleted = stats.deleted_blocks;
-    // A block can fail at three different depths, and only counting the shallowest
+    // A block can fail at four different depths, and only counting the shallowest
     // would overstate the verdict: framing can look fine while the payload inside
-    // is unreadable. All three are failures for oracle purposes.
+    // is unreadable. `NetStats::lost_content_blocks` owns that definition; it is
+    // shared with `manifest.rs` so the number the oracle prints and the number
+    // `quality.content_blocks_lost` publishes cannot drift apart.
     let rpc_payloads_lost = stats
         .rpc_stream_failures
         .saturating_sub(stats.unresolved_rpc_payloads_preserved);
-    let payload_failures =
-        stats.transform_failures + stats.field_stream_failures + rpc_payloads_lost;
-    let failed = malformed + payload_failures;
+    let failed = stats.lost_content_blocks();
 
     println!();
     println!("=== Validation Oracle ===");
@@ -392,11 +400,20 @@ pub fn run(
     if total_with_content == 0 {
         println!("  No content blocks found - cannot validate.");
     } else {
+        // `failed` (`lost_content_blocks()`) is not a subset of
+        // `total_with_content`: a content-block framing failure (header or
+        // `content_bits` unreadable) is counted as lost without the block ever
+        // reaching `rep_layout_blocks`/`class_net_cache_blocks`, since framing
+        // failed before classification. So `failed` can exceed
+        // `total_with_content`, and the passed-block count is saturated at 0
+        // rather than wrapping to u64::MAX on the `- failed` a release build's
+        // disabled overflow checks would not catch.
+        let passed = total_with_content.saturating_sub(failed);
         let pass_rate = 1.0 - (failed as f64 / total_with_content as f64);
         println!(
             "  ORACLE PASS RATE:     {:.6}% ({} / {} blocks passed)",
             pass_rate * 100.0,
-            total_with_content - failed,
+            passed,
             total_with_content
         );
         if stats.skipped_bits > 0 {
@@ -534,20 +551,15 @@ fn print_skip_breakdown(events: &[DiagnosticEvent]) {
     }
 
     println!("  Skip breakdown:");
-    if overrun_count > 0 {
-        println!("    ContentBitsOverrun:   {overrun_count} events, {overrun_bits} bits");
-    }
-    if header_err_count > 0 {
-        println!("    HeaderReadError:      {header_err_count} events, {header_err_bits} bits");
-    }
-    if bits_read_err_count > 0 {
-        println!(
-            "    ContentBitsReadError: {bits_read_err_count} events, {bits_read_err_bits} bits"
-        );
-    }
-    if parse_fail_count > 0 {
-        println!("    ParseFailure:         {parse_fail_count} events, {parse_fail_bits} bits");
-    }
+    // Unconditional, zeros included: a category that stops being recorded (a
+    // renumbered `SkipReason`, a bypassed recording path) is otherwise
+    // indistinguishable from one that legitimately saw nothing -- the line
+    // just vanishes either way. See the module-level rule against counters
+    // that cannot move.
+    println!("    ContentBitsOverrun:   {overrun_count} events, {overrun_bits} bits");
+    println!("    HeaderReadError:      {header_err_count} events, {header_err_bits} bits");
+    println!("    ContentBitsReadError: {bits_read_err_count} events, {bits_read_err_bits} bits");
+    println!("    ParseFailure:         {parse_fail_count} events, {parse_fail_bits} bits");
 }
 
 /// Print full details for one diagnostic event.
@@ -686,6 +698,11 @@ mod tests {
             NetStats {
                 rep_layout_blocks: 1,
                 channel_state_limit_failures: 1,
+                ..NetStats::default()
+            },
+            NetStats {
+                rep_layout_blocks: 1,
+                content_block_framing_failures: 1,
                 ..NetStats::default()
             },
         ] {

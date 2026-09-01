@@ -19,7 +19,12 @@ about 0.3% less than its own `rows offered` line, and a reader could not make
 the numbers add up without going to read the Rust source. See `LIVE_EXPORT`
 and `ReconcileTests`.
 """
+import contextlib
+import io
+import os
+import re
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -208,13 +213,20 @@ class ArgParsingTests(unittest.TestCase):
         args = guard.parse_args(["vrfkit.exe", "corpus", "--checkpoints"])
         self.assertTrue(args.checkpoints)
 
+    def test_identifier_redaction_is_opt_in(self):
+        plain = guard.parse_args(["vrfkit.exe", "corpus"])
+        private = guard.parse_args(
+            ["vrfkit.exe", "corpus", "--redact-identifiers"])
+        self.assertFalse(plain.redact_identifiers)
+        self.assertTrue(private.redact_identifiers)
+
 
 #: The `=== Checkpoints ===` block, appended to a healthy main summary, exactly
 #: as summary.rs's print_checkpoints prints it.
 CLEAN_WITH_CHECKPOINTS = LIVE_EXPORT + """
 === Checkpoints ===
   Checkpoints:      12
-  Overlay:          500 decoded / 0 errors / 20 raw-skip / 5 not-in-table / 2 unnamed / 1 effect blobs
+  Overlay:          500 decoded / 0 errors / 20 raw-skip / 5 not-in-table / 2 unnamed / 4 conflicts / 1 effect blobs
   Checkpoint blobs: 8 decoded / 0 failed
   Checkpoint fails: 0 array / 0 truncated RPC / 0 movement
   Checkpoint CNC:   3 RPC rows
@@ -256,6 +268,9 @@ class CheckpointCounterTests(unittest.TestCase):
         self.assertEqual(err, "")
         self.assertEqual(counters["checkpoint_decoded"], 500)
         self.assertEqual(counters["checkpoint_errors"], 0)
+        self.assertEqual(counters["checkpoint_unnamed"], 2)
+        self.assertEqual(counters["checkpoint_conflicts"], 4)
+        self.assertEqual(counters["checkpoint_effect_blobs"], 1)
         self.assertEqual(counters["checkpoint_blobs_decoded"], 8)
         self.assertEqual(counters["checkpoint_blobs_failed"], 0)
         self.assertEqual(counters["checkpoint_fail_array"], 0)
@@ -297,6 +312,146 @@ class CheckpointCounterTests(unittest.TestCase):
         self.assertIn("Checkpoint fails", err)
 
 
+#: `crates/vrfkit/src/driver/summary.rs` -- read, not copied. See
+#: `SummaryFormatDriftTests`.
+SUMMARY_RS = (
+    Path(__file__).resolve().parents[2]
+    / "crates" / "vrfkit" / "src" / "driver" / "summary.rs"
+)
+
+
+def _overlay_format_string(source: str) -> str:
+    """The checkpoint `Overlay:` format string as summary.rs literally spells it.
+
+    Anchored on `Overlay:` inside a quoted Rust literal. The main pass prints
+    its overlay counters one-per-line and has no such literal, so this is
+    unambiguous -- but the count is asserted rather than assumed, because a
+    second matching literal would make "the format string" a coin toss.
+    """
+    matches = re.findall(r'"(  Overlay:[^"]*)"', source)
+    if len(matches) != 1:
+        raise AssertionError(
+            f"expected exactly one quoted '  Overlay:' format string in "
+            f"{SUMMARY_RS.name}, found {len(matches)}: {matches!r}"
+        )
+    return matches[0]
+
+
+class SummaryFormatDriftTests(unittest.TestCase):
+    """The regex is pinned against the REAL format string, read off summary.rs.
+
+    This is the defect that made the test necessary, not a hypothetical. The
+    Rust side grew a seventh field -- `conflicts` -- and `CHECKPOINT_OVERLAY`
+    still asked for six, so it matched NOTHING on a live `--checkpoints` run.
+    The fixture in this very file pinned the stale six-field format, so the
+    suite stayed green while the check it guards could not run at all.
+
+    A hand-copied fixture cannot catch that: it drifts in exactly the same
+    step as the regex. Reading summary.rs means the NEXT field added there
+    turns this red, which is the only version of this test that works.
+    """
+
+    def setUp(self):
+        if not SUMMARY_RS.is_file():
+            self.fail(f"{SUMMARY_RS} is missing: this test cannot be vacuous")
+        self.source = SUMMARY_RS.read_text(encoding="utf-8")
+
+    def test_the_regex_matches_the_line_summary_rs_actually_prints(self):
+        """Render summary.rs's own format string and match the regex on it.
+
+        Each `{}` becomes a distinct number, so a regex that matched the line
+        while mis-assigning its groups fails here too, not just one that fails
+        to match at all.
+        """
+        fmt = _overlay_format_string(self.source)
+        placeholders = fmt.count("{}")
+        values = [str(11 * (n + 1)) for n in range(placeholders)]
+        rendered = fmt
+        for value in values:
+            rendered = rendered.replace("{}", value, 1)
+
+        match = guard.CHECKPOINT_OVERLAY.search(rendered)
+        self.assertIsNotNone(
+            match,
+            f"CHECKPOINT_OVERLAY does not match the line summary.rs prints.\n"
+            f"  summary.rs: {fmt}\n"
+            f"  rendered  : {rendered}\n"
+            f"  regex     : {guard.CHECKPOINT_OVERLAY.pattern}\n"
+            f"A field was added to or removed from the Rust format string. "
+            f"Update CHECKPOINT_OVERLAY, CHECKPOINT_COUNTERS group numbers, "
+            f"and CHECKPOINT_REQUIRED together.",
+        )
+        self.assertEqual(
+            list(match.groups()), values,
+            "CHECKPOINT_OVERLAY matched but its capture groups are in the "
+            "wrong order or the wrong count for summary.rs's field order",
+        )
+
+    def test_every_field_summary_rs_prints_is_a_named_counter(self):
+        """A captured group nothing names is a counter that reaches no total.
+
+        The group count and the CHECKPOINT_COUNTERS entries pointing at this
+        pattern must agree, or a field is parsed and then dropped -- read but
+        never summed, never required, never printed.
+        """
+        fmt = _overlay_format_string(self.source)
+        named = [
+            key for key, pattern, _group in guard.CHECKPOINT_COUNTERS
+            if pattern is guard.CHECKPOINT_OVERLAY
+        ]
+        self.assertEqual(
+            len(named), fmt.count("{}"),
+            f"summary.rs prints {fmt.count('{}')} overlay fields but "
+            f"CHECKPOINT_COUNTERS names {len(named)} of them: {named}",
+        )
+        groups = sorted(
+            group for _key, pattern, group in guard.CHECKPOINT_COUNTERS
+            if pattern is guard.CHECKPOINT_OVERLAY
+        )
+        self.assertEqual(
+            groups, list(range(1, fmt.count("{}") + 1)),
+            "the overlay capture groups CHECKPOINT_COUNTERS reads are not "
+            f"exactly 1..{fmt.count('{}')}: {groups}",
+        )
+
+    def test_every_overlay_counter_is_required_and_reaches_a_total(self):
+        """Parsed is not enough: each must be REQUIRED and must be printed.
+
+        `conflicts` was the field the regex missed; a fix that parsed it but
+        left it out of CHECKPOINT_REQUIRED would let a summary that stopped
+        printing it read as fine, which is this repo's named failure mode.
+        """
+        required = {key for key, _label in guard.CHECKPOINT_REQUIRED}
+        for key, pattern, _group in guard.CHECKPOINT_COUNTERS:
+            if pattern is not guard.CHECKPOINT_OVERLAY:
+                continue
+            with self.subTest(counter=key):
+                self.assertIn(
+                    key, required,
+                    f"{key} is parsed but not REQUIRED: a summary that stops "
+                    f"printing it would read as a pass",
+                )
+
+    def test_the_fixture_in_this_file_matches_summary_rs_field_count(self):
+        """CLEAN_WITH_CHECKPOINTS is the fixture that drifted. Pin it too.
+
+        The stale fixture is what let the suite stay green: it described a
+        six-field line the Rust side had stopped printing, so every test built
+        on it agreed with the broken regex.
+        """
+        fmt = _overlay_format_string(self.source)
+        fixture = [
+            line for line in CLEAN_WITH_CHECKPOINTS.splitlines()
+            if line.strip().startswith("Overlay:")
+        ]
+        self.assertEqual(len(fixture), 1, fixture)
+        self.assertEqual(
+            fixture[0].count(" / ") + 1, fmt.count("{}"),
+            f"the fixture's Overlay line has a different field count from "
+            f"summary.rs:\n  fixture   : {fixture[0]}\n  summary.rs: {fmt}",
+        )
+
+
 class DeadCheckpointCounterTests(unittest.TestCase):
     """Mirrors DeadCounterTests for the checkpoint pass: a corpus where the
     checkpoint decoders never ran must not read as a clean checkpoint sweep.
@@ -315,6 +470,183 @@ class DeadCheckpointCounterTests(unittest.TestCase):
         totals = {"checkpoint_decoded": 500, "checkpoint_blobs_decoded": 0}
         dead = guard.dead_checkpoint_counters(totals)
         self.assertTrue(dead)
+
+
+#: Stand-in for `vrfkit.exe`, playing the part `_export_one` expects --
+#: `[str(exe), "export", str(replay), "--out", str(out)]`. Run under
+#: `sys.executable`, the "export" token becomes the script Python executes (the
+#: same trick `test_check_export_baseline.py` uses for its fake `export`), so a
+#: file literally named `export` in the process's cwd stands in for the real
+#: binary. Every helper above (`read_counters`, `dead_counters`, `reconcile`)
+#: is proven correct on synthetic text; none of that proves `main()` actually
+#: calls them and acts on what they return -- which is exactly the shape of
+#: this file's own recorded defect ("OK: every replay reported Decode errors:
+#: 0" printed over an exporter that never ran). These tests are that call.
+FAKE_EXPORT_SCRIPT = '''\
+import sys
+from pathlib import Path
+
+argv = sys.argv
+replay = Path(argv[1])
+out = Path(argv[argv.index("--out") + 1])
+out.mkdir(parents=True, exist_ok=True)
+name = replay.name
+
+if "badexit" in name:
+    print("exporter crashed", file=sys.stderr)
+    raise SystemExit(9)
+
+if "nothingran" in name:
+    # The 13.02 shape one level down: every counter a legitimate zero.
+    print("""
+Rows offered:      0
+Decoded OK:        0
+Decode errors:     0
+Raw/Skip:          0
+Not in table:      0
+No field name:     0
+Struct blobs:      0 decoded / 0 failed
+""")
+    raise SystemExit(0)
+
+if "decodeerr" in name:
+    print("""
+Rows offered:      100
+Decoded OK:        90
+Decode errors:     10
+Raw/Skip:          0
+Not in table:      0
+No field name:     0
+Struct blobs:      5 decoded / 0 failed
+""")
+    raise SystemExit(0)
+
+if "blobfail" in name:
+    print("""
+Rows offered:      100
+Decoded OK:        95
+Decode errors:     0
+Raw/Skip:          3
+Not in table:      2
+No field name:     0
+Struct blobs:      5 decoded / 1 failed
+""")
+    raise SystemExit(0)
+
+if "missingcounter" in name:
+    # "No field name" omitted entirely -- must not read as 0.
+    print("""
+Rows offered:      100
+Decoded OK:        100
+Decode errors:     0
+Raw/Skip:          0
+Not in table:      0
+Struct blobs:      5 decoded / 0 failed
+""")
+    raise SystemExit(0)
+
+if "mismatch" in name:
+    # Every REQUIRED counter present, but the five categories that make up
+    # "Rows offered" undercount it by one -- summary.rs grew a sixth category
+    # this tool does not know to parse yet.
+    print("""
+Rows offered:      100
+Decoded OK:        90
+Decode errors:     0
+Raw/Skip:          5
+Not in table:      3
+No field name:     1
+Struct blobs:      5 decoded / 0 failed
+""")
+    raise SystemExit(0)
+
+print("""
+Rows offered:      100
+Decoded OK:        90
+Decode errors:     0
+Raw/Skip:          5
+Not in table:      3
+No field name:     2
+Struct blobs:      5 decoded / 0 failed
+""")
+'''
+
+
+class MainWiringTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        (self.root / "export").write_text(FAKE_EXPORT_SCRIPT, encoding="utf-8")
+        self.corpus = self.root / "corpus"
+        self.corpus.mkdir()
+        self._previous_cwd = Path.cwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, self._previous_cwd)
+        self._argv = sys.argv
+
+    def make_replay(self, name: str) -> None:
+        (self.corpus / name).write_bytes(b"not a real replay")
+
+    def run_main(self, extra_args=()):
+        argv = [sys.executable, str(self.corpus), "--jobs", "1", *extra_args]
+        sys.argv = ["check_decode_errors_corpus.py", *argv]
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+                code = guard.main()
+        finally:
+            sys.argv = self._argv
+        return code, out.getvalue()
+
+    def test_a_clean_corpus_exits_zero(self):
+        self.make_replay("a.vrf")
+        code, output = self.run_main()
+        self.assertEqual(code, 0, output)
+        self.assertIn("OK:", output)
+
+    def test_decode_errors_fail_the_run(self):
+        self.make_replay("decodeerr.vrf")
+        code, output = self.run_main()
+        self.assertEqual(code, 1, output)
+        self.assertIn("decode errors", output)
+
+    def test_struct_blob_failures_fail_the_run(self):
+        self.make_replay("blobfail.vrf")
+        code, output = self.run_main()
+        self.assertEqual(code, 1, output)
+        self.assertIn("struct-blob", output)
+
+    def test_an_exporter_that_decoded_nothing_fails_the_run(self):
+        """The 13.02 shape, one script down from the Rust regression: every
+        counter is a legitimate zero, `Decode errors: 0` is vacuously true,
+        and only `dead_counters` -- consulted by `main()` -- can catch it."""
+        self.make_replay("nothingran.vrf")
+        code, output = self.run_main()
+        self.assertEqual(code, 1, output)
+        self.assertIn("never moved", output)
+
+    def test_a_missing_required_counter_fails_the_run(self):
+        self.make_replay("missingcounter.vrf")
+        code, output = self.run_main()
+        self.assertEqual(code, 1, output)
+        self.assertIn("did not report the counter", output)
+
+    def test_a_nonzero_exporter_exit_fails_the_run(self):
+        self.make_replay("badexit.vrf")
+        code, output = self.run_main()
+        self.assertEqual(code, 1, output)
+        self.assertIn("did not report the counter", output)
+
+    def test_a_reconciliation_mismatch_fails_the_run(self):
+        self.make_replay("mismatch.vrf")
+        code, output = self.run_main()
+        self.assertEqual(code, 1, output)
+        self.assertIn("do not reconcile", output)
+
+    def test_no_vrf_files_is_a_controlled_failure(self):
+        code, output = self.run_main()
+        self.assertEqual(code, 2, output)
 
 
 if __name__ == "__main__":

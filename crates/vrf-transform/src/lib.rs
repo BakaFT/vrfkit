@@ -20,11 +20,11 @@
 //!
 //! # Per-build variation
 //!
-//! The algorithm skeleton has been stable from release-12.10 to release-13.02,
-//! and across the regional split: the Tencent-published `release-china-13.02`
-//! shares it too. What changes per build is two constants and the order of a
-//! handful of bit primitives; see [`versions`]. Adding a build means writing one
-//! `impl` with two constants and three word functions.
+//! The algorithm skeleton has been stable from release-12.10 through
+//! release-13.04, including the Tencent-published release-china-13.02 branch.
+//! What changes per build is two constants and the order of a handful of bit
+//! primitives; see [`versions`]. Adding a build means writing one `impl` with
+//! two constants and three word functions.
 //!
 //! # Example
 //!
@@ -52,22 +52,13 @@
 //!
 //! # Cargo features
 //!
-//! **None, deliberately.** Gating individual builds is the obvious candidate --
-//! a consumer that only ever sees release-13.01 replays links four transforms
-//! it cannot use -- but it cannot be done without changing this crate's public
-//! API, which is frozen:
-//!
-//! - [`ALL_VERSIONS`] is `[TransformVersion; 6]`. Its *type* encodes the build
-//!   count, so dropping one build changes the type.
-//! - [`TransformVersion`]'s variants are public. Gating one removes a name that
-//!   callers match on.
-//!
-//! Making this work needs `ALL_VERSIONS` to become `&'static [TransformVersion]`
-//! and callers to stop matching variants exhaustively. That is a reasonable
-//! change and it is recommended, but it is an API change rather than a feature
-//! flag, so it is not made here. The cost of not gating is small in any case:
-//! the six `impl`s are branch-free arithmetic, and the only sizeable data is
-//! the three S-box tables (used by release-13.00 and both 13.02 builds alone).
+//! **None, deliberately.** [`ALL_VERSIONS`] is a length-independent slice and
+//! [`TransformVersion`] is non-exhaustive, so adding a build does not change the
+//! registry's public type and external callers cannot match every future variant.
+//! Per-build gating would still remove existing, publicly named variants and is
+//! therefore not offered. The cost is small: the seven `impl`s are branch-free
+//! arithmetic, and the only sizeable data is the three S-box tables (used by
+//! release-13.00 and both release-13.02 branches).
 
 #![forbid(unsafe_code)]
 
@@ -75,7 +66,7 @@ pub mod helpers;
 pub mod sbox;
 pub mod versions;
 
-use versions::{SeededTransform, V12_10, V12_11, V13_00, V13_01, V13_02, V13_02China};
+use versions::{SeededTransform, V12_10, V12_11, V13_00, V13_01, V13_02, V13_02China, V13_04};
 use vrf_bitio::{BitError, BitReader, Result as BitResult};
 
 /// Derive the transform seed for a content block.
@@ -173,16 +164,25 @@ pub enum TransformVersion {
     V1302,
     /// `++Ares-Core+release-china-13.02`
     V1302China,
+    /// `++Ares-Core+release-13.04`
+    V1304,
 }
 
 /// Every transform this build of the crate knows about.
-pub const ALL_VERSIONS: [TransformVersion; 6] = [
+///
+/// The public type deliberately does not encode the current number of builds:
+/// adding another variant and registry entry remains source-compatible for
+/// callers that iterate this slice. [`TransformVersion`] is also
+/// [`non_exhaustive`](https://doc.rust-lang.org/reference/attributes/type_system.html#the-non_exhaustive-attribute),
+/// so downstream matches must retain a fallback arm for future builds.
+pub const ALL_VERSIONS: &[TransformVersion] = &[
     TransformVersion::V1210,
     TransformVersion::V1211,
     TransformVersion::V1300,
     TransformVersion::V1301,
     TransformVersion::V1302,
     TransformVersion::V1302China,
+    TransformVersion::V1304,
 ];
 
 /// A replay whose branch has no registered transform.
@@ -202,7 +202,12 @@ impl core::fmt::Display for UnsupportedBranch {
             f,
             "no payload transform is registered for replay branch '{}'; known branches: {}",
             self.branch,
-            ALL_VERSIONS.map(TransformVersion::branch).join(", ")
+            ALL_VERSIONS
+                .iter()
+                .copied()
+                .map(TransformVersion::branch)
+                .collect::<Vec<_>>()
+                .join(", ")
         )
     }
 }
@@ -213,7 +218,7 @@ impl TransformVersion {
     /// Look up a transform by exact replay branch string.
     #[must_use]
     pub fn from_branch(branch: &str) -> Option<Self> {
-        ALL_VERSIONS.into_iter().find(|v| v.branch() == branch)
+        ALL_VERSIONS.iter().copied().find(|v| v.branch() == branch)
     }
 
     /// Look up a transform, returning a descriptive error when unknown.
@@ -233,6 +238,7 @@ impl TransformVersion {
             Self::V1301 => V13_01::BRANCH,
             Self::V1302 => V13_02::BRANCH,
             Self::V1302China => V13_02China::BRANCH,
+            Self::V1304 => V13_04::BRANCH,
         }
     }
 
@@ -251,6 +257,7 @@ impl TransformVersion {
             Self::V1301 => transform_in_place::<V13_01>(buf, bit_count, seed),
             Self::V1302 => transform_in_place::<V13_02>(buf, bit_count, seed),
             Self::V1302China => transform_in_place::<V13_02China>(buf, bit_count, seed),
+            Self::V1304 => transform_in_place::<V13_04>(buf, bit_count, seed),
         }
     }
 
@@ -287,9 +294,25 @@ mod tests {
 
     #[test]
     fn branch_lookup_round_trips() {
-        for v in ALL_VERSIONS {
+        for v in ALL_VERSIONS.iter().copied() {
             assert_eq!(TransformVersion::from_branch(v.branch()), Some(v));
         }
+    }
+
+    #[test]
+    fn public_registry_type_does_not_encode_its_length() {
+        // This assignment is the regression guard: changing ALL_VERSIONS back
+        // to `[TransformVersion; N]` makes the public API depend on N and fails
+        // to compile here when the next build is added.
+        let registry: &'static [TransformVersion] = ALL_VERSIONS;
+        assert_eq!(registry, ALL_VERSIONS);
+    }
+
+    #[test]
+    fn release_13_04_is_registered() {
+        let branch = "++Ares-Core+release-13.04";
+        let version = TransformVersion::from_branch(branch);
+        assert_eq!(version.map(TransformVersion::branch), Some(branch));
     }
 
     #[test]
@@ -299,12 +322,13 @@ mod tests {
         let text = err.to_string();
         assert!(text.contains("release-99.99"), "{text}");
         assert!(text.contains("release-13.02"), "{text}");
+        assert!(text.contains("release-13.04"), "{text}");
     }
 
     #[test]
     fn zero_bits_is_a_noop() {
         let mut buf = [0xAAu8; 4];
-        for v in ALL_VERSIONS {
+        for v in ALL_VERSIONS.iter().copied() {
             v.apply(&mut buf, 0, 1234).unwrap();
             assert_eq!(buf, [0xAAu8; 4]);
         }
@@ -338,7 +362,7 @@ mod tests {
         let payload = [0xBFu8, 0xDF, 0x6F, 0x9E, 0xA1, 0xF2, 0x7B, 0xA0, 0x11];
         let bit_count = 65;
         let mut outputs = Vec::new();
-        for v in ALL_VERSIONS {
+        for v in ALL_VERSIONS.iter().copied() {
             let mut buf = vec![0u8; TransformVersion::output_byte_count(bit_count)];
             let mut r = BitReader::new(&payload);
             v.decode_from(&mut r, bit_count, seed_for(bit_count, 2), &mut buf)

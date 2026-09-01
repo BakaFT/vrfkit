@@ -50,7 +50,7 @@ const POW11_8: u32 = 214_358_881;
 /// - [`Self::word32`] and [`Self::byte`] were **not** in that source. It zeroed
 ///   both lanes, destroying every payload's trailing 8..=63 bits, because
 ///   whoever reverse-engineered it never recovered them. They are derived here
-///   from the two lane-correspondence rules that hold across all five other
+///   from the two lane-correspondence rules that hold across all six other
 ///   builds -- `word32` mirrors `word64` with `rotate_left` for `rotate_right`
 ///   and `% 31` for `% 63`; `byte` mirrors it with `wrapping_mul(11.pow(k))`
 ///   for `rotate_right(k)` and `% 7` for `% 63`.

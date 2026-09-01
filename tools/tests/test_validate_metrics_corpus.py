@@ -13,10 +13,15 @@ whenever compute_metrics exits 0 without writing. `check_export_baseline.py`
 already states the rule: "Exporting over a previous run would leave a file the
 exporter has stopped writing sitting there with last run's contents".
 """
+import contextlib
+import io
+import json
 import sys
 import tempfile
 import unittest
+from concurrent.futures import Future
 from pathlib import Path
+from unittest import mock
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -129,6 +134,118 @@ class FailureTests(unittest.TestCase):
         results = [{"id": "b", "stage": "export", "error": "boom"},
                    {"id": "c", "stage": "metrics", "error": "boom"}]
         self.assertEqual(len(guard.failures(results)), 2)
+
+
+class _SyncPool:
+    """Stands in for `ProcessPoolExecutor` and runs `submit()` in-process.
+
+    `process()` runs under a REAL `ProcessPoolExecutor` in production, which
+    spawns a fresh interpreter that re-imports this module from the real
+    environment -- a patched `guard.VRFKIT`/`guard.REPO`/etc. in the test
+    process would not be visible there. Running synchronously instead means
+    `process()` sees this test's patched module globals directly, which is
+    what makes `main()` testable at all without a real corpus, a compiled
+    `vrfkit` binary, or a valplay checkout.
+    """
+
+    def __init__(self, max_workers=None):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def submit(self, fn, *args, **kwargs):
+        fut = Future()
+        try:
+            fut.set_result(fn(*args, **kwargs))
+        except BaseException as exc:  # pragma: no cover - defensive
+            fut.set_exception(exc)
+        return fut
+
+
+class MainWiringTests(unittest.TestCase):
+    """`failures()` is proven correct on synthetic result dicts above; none of
+    that proves `main()` actually calls it and acts on what it returns --
+    which is exactly this file's own recorded defect ("exit status was
+    `return 0` once any single replay finished"). This is that call.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+
+        vrf_dir = root / "vrf"
+        exports = root / "exports"
+        vrf_dir.mkdir()
+        exports.mkdir()
+
+        vrfkit = root / "vrfkit_stub"
+        vrfkit.write_bytes(b"test executable placeholder")
+
+        adapter = root / "adapter_stub.py"
+        compute = root / "compute_stub.py"
+
+        # `a` gets a source replay and a reference bundle -- the stub pipeline
+        # completes it. `b` gets neither, so `process()` dies at the "input"
+        # stage before any subprocess runs at all.
+        (vrf_dir / "a.vrf").write_bytes(b"replay")
+        (exports / "a").mkdir()
+        (exports / "a" / "metrics.json").write_text("{}", encoding="utf-8")
+
+        self._patches = [
+            mock.patch.object(guard, "REPO", root),
+            mock.patch.object(guard, "VRF_DIR", vrf_dir),
+            mock.patch.object(guard, "EXPORTS", exports),
+            mock.patch.object(guard, "VRFKIT", vrfkit),
+            mock.patch.object(guard, "ADAPTER", adapter),
+            mock.patch.object(guard, "COMPUTE", compute),
+            mock.patch.object(guard, "run_stage", side_effect=self.complete_stage),
+            mock.patch.object(guard, "ProcessPoolExecutor", _SyncPool),
+        ]
+        for p in self._patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+        self._argv = sys.argv
+
+    @staticmethod
+    def complete_stage(cmd, *, timeout):
+        del timeout
+        if "--out" in cmd:
+            Path(cmd[cmd.index("--out") + 1]).mkdir(parents=True, exist_ok=True)
+        elif "-o" in cmd:
+            Path(cmd[cmd.index("-o") + 1]).mkdir(parents=True, exist_ok=True)
+        else:
+            bundle = Path(cmd[-1])
+            (bundle / "metrics.json").write_text("{}", encoding="utf-8")
+        return mock.Mock(returncode=0, stderr=""), None
+
+    def run_main(self, only=("a", "b")):
+        sys.argv = ["validate_metrics_corpus.py", "--jobs", "1"]
+        for r in only:
+            sys.argv += ["--only", r]
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+                code = guard.main()
+        finally:
+            sys.argv = self._argv
+        return code, out.getvalue()
+
+    def test_one_completed_replay_does_not_mask_a_dead_one(self):
+        """The recorded defect exactly: `a` finishes, `b` never does."""
+        code, output = self.run_main(only=("a", "b"))
+        self.assertEqual(code, 1, output)
+        self.assertIn("FAILED", output)
+        self.assertIn("b", output)
+
+    def test_all_replays_completing_exits_zero(self):
+        code, output = self.run_main(only=("a",))
+        self.assertEqual(code, 0, output)
 
 
 if __name__ == "__main__":
