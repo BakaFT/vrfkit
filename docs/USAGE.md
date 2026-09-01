@@ -142,6 +142,8 @@ PROBE: forcing the '++Ares-Core+release-13.02' transform onto a '++Ares-Core+rel
 The signal is close to binary -- that same file reads 100.000000% under its own
 transform -- which is what makes the flag useful for a lane-at-a-time bring-up.
 See [Bringing up a new game build](../CONTRIBUTING.md#bringing-up-a-new-game-build).
+For a Tencent branch with no usable implementation, continue with the dedicated
+[China release recovery method](CHINA_RELEASE_BRINGUP.md).
 
 **It always exits 3, even when the pass rate is 100%.** A probe measures a
 hypothesis, not the file; "this replay validates" is a claim about the replay's
@@ -503,6 +505,12 @@ rustdoc. The exact copy-paste matrix is in
 `pip install -r requirements.txt` first (pyarrow, numpy) -- everything below
 needs it.
 
+The source-free Tencent transform workflow has its own evidence and recovery
+helper under `tools/china_release/`. Its interface, evidentiary limits and China
+13.04 worked example are documented in
+[China Release Transform Bring-up](CHINA_RELEASE_BRINGUP.md); it is not a normal
+export validator or generated-table pipeline.
+
 ### Generators
 
 **Never hand-edit the output.**
@@ -513,8 +521,8 @@ needs it.
 | `apply_type_corrections.py` | Applies verified corrections/additions to that file and recomputes the two-line generation header |
 | `extract_checksum_types.py` | `crates/vrf-decode/src/checksum_table.rs` -- `compatible_checksum` -> `FieldType`, learned from the fields the overlay table already declares. Needs an export directory rather than the C# tree, since checksums come from the replay. Checksums whose donors disagree are dropped, which is the safety property. Repeat `--export` to widen the basis; the run **merges** into the committed table rather than replacing it, because a checksum this basis did not happen to see is still correct. `--check` asks whether the two agree *where they overlap* -- not whether they are byte-identical, which a content-addressed table cannot be across different sets of replays. |
 | `extract_sboxes.py` | `crates/vrf-transform/src/sbox.rs` |
-| `extract_golden.py` | `crates/vrf-transform/tests/data/golden_vectors.rs` -- lifts the five `release-*` builds from the C# fixture and computes `release-china-13.02` with `china_transform_oracle.py`. The fixture *does* carry China rows; they are dropped on purpose, and a fixture that stops carrying them fails rather than passing silently. |
-| `china_transform_oracle.py` | Not a generator on its own -- a second, independent implementation of the `release-china-13.02` payload transform, imported by `extract_golden.py`. It exists because that build has no usable external oracle: the C# fixture's vectors for it come from an implementation that never recovered the build's 32-bit and byte lanes and zeroes them, so six of its eleven vectors disagree with the real client. Reading the S-boxes out of the generated Rust table is deliberate -- they are shared with the lifted builds, so a corrupt table fails those first. |
+| `extract_golden.py` | `crates/vrf-transform/tests/data/golden_vectors.rs` -- lifts 66 vectors for the six global builds from the C# fixture and computes 22 vectors for both China builds with `china_transform_oracle.py`. Regional fixture rows are discarded if present rather than trusted. |
+| `china_transform_oracle.py` | Not a generator on its own -- independent Python implementations of both China transforms, imported by `extract_golden.py`. China 13.02 replaces fixture vectors from an implementation whose 32-bit and byte lanes were zeroing stubs; China 13.04 is absent from that fixture. These implementations catch porting differences but cannot independently prove a replay-recovered algorithm. |
 | `extract_equippables.py` | `tools/equippable_table.py` |
 
 **Order matters:** `extract_descriptors.py` -> `apply_type_corrections.py` ->
@@ -734,7 +742,7 @@ cargo +1.86.0 clippy --workspace --all-targets --all-features --locked -- -D war
 cargo +1.86.0 fmt --check
 python -W error tools/check_ascii.py --check                         # 121 files
 python -W error tools/check_effect_decoder.py --check                # 12 cases
-python -W error -m unittest discover -s tools/tests -p "test_*.py"   # 556 passing
+python -W error -m unittest discover -s tools/tests -p "test_*.py"   # 560 passing
 python -W error tools/check_docs.py --fast
 python -W error tools/apply_type_corrections.py --check              # 133 corrections
 python -W error tools/extract_checksum_types.py --export tools/fixtures/checksum_export --check
@@ -887,7 +895,8 @@ checkpoint decode errors were all zero.
 Adding a new build takes one `SeededTransform` impl -- two constants and three
 word functions. See the README's
 [Supported builds and the cost of a new build](../README.md#supported-builds-and-the-cost-of-a-new-build)
-section.
+section. Recovering those values for a source-free Tencent branch is covered by
+[China Release Transform Bring-up](CHINA_RELEASE_BRINGUP.md).
 
 **When pinning a replay as a baseline, do not point at
 `%LOCALAPPDATA%\VALORANT\Saved\Demos`.** The game owns and rotates that

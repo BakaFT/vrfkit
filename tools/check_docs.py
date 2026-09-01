@@ -9,8 +9,9 @@ README listed four 13.02 replays for weeks after the game deleted them.
 None of that is caught by any other check, because a stale sentence compiles
 and passes every test. So this reads the repo and the docs and compares:
 
-  1. every tools/*.py script is mentioned in USAGE -- an unmentioned tool is
-     an undiscoverable one, and 19 of them existed with no reference page
+  1. every shipped Python tool is mentioned in USAGE or its dedicated method
+     document -- an unmentioned tool is an undiscoverable one, and 19 of them
+     existed with no reference page
   2. every script USAGE names actually exists
   3. every crate has a row in the layer table
   4. every relative link resolves
@@ -107,22 +108,32 @@ EXTERNAL_SCRIPTS = {"compute_metrics.py", "python_interop.py"}
 
 LINK_RE = re.compile(r"\[`?([^\]]+?)`?\]\(([^)]+)\)")
 SCRIPT_RE = re.compile(r"`?([a-z_][a-z0-9_]*\.py)`?")
+TOOL_SCRIPT_DIRS = (REPO / "tools", REPO / "tools" / "china_release")
 
 
 def read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def check_tools(usage: str) -> list[str]:
+def shipped_tools() -> dict[str, str]:
+    """Script basename -> repository-relative path for documented tools."""
+    paths = [path for directory in TOOL_SCRIPT_DIRS for path in directory.glob("*.py")]
+    tools = {path.name: path.relative_to(REPO).as_posix() for path in paths}
+    if len(tools) != len(paths):
+        raise ValueError("documented tool directories contain duplicate script basenames")
+    return tools
+
+
+def check_tools(documentation: str) -> list[str]:
     """Every shipped tool is documented, and every documented tool ships."""
     problems = []
-    shipped = {p.name for p in (REPO / "tools").glob("*.py")}
-    named = {n for n in SCRIPT_RE.findall(usage) if not n.startswith("test_")}
+    shipped = shipped_tools()
+    named = {n for n in SCRIPT_RE.findall(documentation) if not n.startswith("test_")}
 
-    for name in sorted(shipped - named):
-        problems.append(f"tools/{name} exists but docs/USAGE.md never mentions it")
-    for name in sorted(named - shipped - EXTERNAL_SCRIPTS):
-        problems.append(f"docs/USAGE.md names tools/{name}, which does not exist")
+    for name in sorted(shipped.keys() - named):
+        problems.append(f"{shipped[name]} exists but the tool docs never mention it")
+    for name in sorted(named - shipped.keys() - EXTERNAL_SCRIPTS):
+        problems.append(f"the tool docs name tools/{name}, which does not exist")
     return problems
 
 
@@ -293,8 +304,14 @@ def contradicting_test_counts(docs: dict[str, str]) -> list[str]:
 #: contributor is told to run. `CLAUDE.md` carries a relative link nothing was
 #: checking; it quotes no counts by design ("counts are omitted on purpose"),
 #: so joining this tier -- not the quote-it tier -- imposes no new obligation.
-ALL_DOCS = ("README.md", "docs/USAGE.md", "docs/DATA.md", "CONTRIBUTING.md",
-            "CLAUDE.md")
+ALL_DOCS = (
+    "README.md",
+    "docs/USAGE.md",
+    "docs/DATA.md",
+    "docs/CHINA_RELEASE_BRINGUP.md",
+    "CONTRIBUTING.md",
+    "CLAUDE.md",
+)
 
 #: Numbers that are quoted in prose *and* produced by something runnable, with
 #: the phrasing narrow enough that a match is always that claim. All three of
@@ -660,6 +677,8 @@ def main() -> int:
         return 2
 
     readme, usage = read(README), read(USAGE)
+    china_release = read(REPO / "docs" / "CHINA_RELEASE_BRINGUP.md")
+    tool_docs = usage + "\n" + china_release
     docs = {"README.md": readme, "USAGE.md": usage}
     #: Every doc, for the checks that only ask a number not to be wrong.
     #: `docs` stays README+USAGE for the ones that require a number to be
@@ -674,7 +693,7 @@ def main() -> int:
     overlay_counters = baseline_overlay_counters()
 
     problems = (
-        check_tools(usage)
+        check_tools(tool_docs)
         + check_crates(usage)
         + check_links(README, readme)
         + check_links(USAGE, usage)
@@ -711,7 +730,7 @@ def main() -> int:
         print(f"tests: rust {rust}, tools {tools_n}")
         checked += 1
 
-    n_tools = len(list((REPO / "tools").glob("*.py")))
+    n_tools = len(shipped_tools())
     n_crates = len({p.parent.name for p in (REPO / "crates").glob("*/Cargo.toml")})
     print(f"docs: {len(ALL_DOCS)} files   "
           f"{n_tools} tools, {n_crates} crates, {checked} checks")

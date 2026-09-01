@@ -172,6 +172,11 @@ and the rest of the workspace needs nothing: the container is version-pinned but
 not build-pinned, field names come from the replay, handle layouts resolve by
 name, and the checksum type table is content-addressed.
 
+This section covers integration once a candidate is available. When a Tencent
+branch has no usable source implementation, use the replay-driven recovery
+method, evidence schema and search helper in
+[`docs/CHINA_RELEASE_BRINGUP.md`](docs/CHINA_RELEASE_BRINGUP.md).
+
 ### 1. Check the container first
 
 ```bash
@@ -213,6 +218,12 @@ visible on its own**, because only payloads whose length is not a multiple of
 64 bits depend on the shorter lanes, and they are a small minority. You are
 never guessing three functions at once.
 
+That ladder assumes the new build's PRNG constants are already right. During
+source-free China 13.04 recovery, correct `word64` with wrong constants reached
+only 56.386608%, while 222,692 / 222,757 first-word grammar prefixes passed.
+Use a first-word prefix measurement to isolate `word64` when the constants are
+unknown; do not reject it solely because the total misses the table above.
+
 `TAIL_XOR` is not an independent constant — it is the low byte of
 `SEED_ADDEND` in all eight builds, and a test in `versions/mod.rs` enforces that.
 
@@ -252,6 +263,15 @@ A replay validating is not enough on its own, and neither are golden vectors.
 - **Values, not counters.** `Decode errors: 0` means nothing threw. Export and
   read something with a known shape — a scoreline that reaches 13, a
   half-time side switch at the right round — before believing it.
+
+For China releases, the exact known-plaintext, MITM, short-lane and PRNG
+constant procedure is specified in
+[`docs/CHINA_RELEASE_BRINGUP.md`](docs/CHINA_RELEASE_BRINGUP.md). Its committed
+13.04 fixture can be replayed quickly with:
+
+```bash
+python -W error tools/china_release/recover.py
+```
 
 ### 6. Register it everywhere
 

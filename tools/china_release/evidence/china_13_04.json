@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "branch": "++Ares-Core+release-china-13.04",
+  "replay": {
+    "label": "4bf66d93",
+    "size_bytes": 21190421,
+    "sha256": "661f1e4689c06c992915cb87236eb822329d0d62b5b55bc0992eb84a499fc1d9"
+  },
+  "word64": {
+    "sbox_path": "crates/vrf-transform/src/sbox.rs",
+    "max_sequence_length": 6,
+    "calibration": {
+      "label": "china-13.02 DefaultCeremony",
+      "bit_count": 64,
+      "actor_net_guid": 312,
+      "state": 376,
+      "cipher_le": "8829915d3e82dbab",
+      "plain_le": "100ca261300f8100",
+      "expected_sequence": ["ROL7", "ROR8", "SBOX", "SWAP", "REV", "ADD1"]
+    },
+    "vectors": [
+      {
+        "label": "china-13.04 DefaultCeremony",
+        "bit_count": 64,
+        "actor_net_guid": 28,
+        "state": 92,
+        "cipher_le": "f0f4008130688a45",
+        "plain_le": "100ca261300f8100"
+      },
+      {
+        "label": "china-13.04 AceCeremony first word",
+        "bit_count": 96,
+        "actor_net_guid": 30,
+        "state": 126,
+        "cipher_le": "f0740481d0df9d45",
+        "plain_le": "100ca261300f8120"
+      }
+    ],
+    "expected_sequence": ["REV", "XOR6", "ADD4", "ADD3", "ADD2", "XOR1"]
+  },
+  "short_lanes": {
+    "expected_complements": {
+      "first_xor": true,
+      "last_xor": true
+    },
+    "word32": [
+      {"state": 51, "cipher_le": "86457853", "plain_le": "100ca261"},
+      {"state": 49, "cipher_le": "8645b871", "plain_le": "100ca261"},
+      {"state": 429, "cipher_le": "8645aa6e", "plain_le": "100ca261"},
+      {"state": 447, "cipher_le": "8645f449", "plain_le": "100ca261"},
+      {"state": 445, "cipher_le": "8645f46a", "plain_le": "100ca261"},
+      {"state": 443, "cipher_le": "86458a58", "plain_le": "100ca261"},
+      {"state": 441, "cipher_le": "86458a7b", "plain_le": "100ca261"}
+    ],
+    "byte": [
+      {"state": 415, "cipher": "0xf6", "plain": "0x00"},
+      {"state": 411, "cipher": "0xd5", "plain": "0x00"},
+      {"state": 395, "cipher": "0xdd", "plain": "0x00"},
+      {"state": 23, "cipher": "0xee", "plain": "0x00"},
+      {"state": 21, "cipher": "0xaa", "plain": "0x00"},
+      {"state": 409, "cipher": "0x94", "plain": "0x00"},
+      {"state": 413, "cipher": "0xb6", "plain": "0x00"}
+    ]
+  },
+  "prng": {
+    "seed": 126,
+    "state_candidates": [
+      {"identity": "PlayerState 274", "state": "0x727e4258"},
+      {"identity": "PlayerState 278 a", "state": "0x72735e58"},
+      {"identity": "PlayerState 278 b", "state": "0xbbd80bc5"},
+      {"identity": "PlayerState 280", "state": "0x0d8191fe"},
+      {"identity": "PlayerState 292 a", "state": "0xbbd835c5"},
+      {"identity": "PlayerState 292 b", "state": "0x7aaa8369"},
+      {"identity": "PlayerState 294", "state": "0xc4271bf0"},
+      {"identity": "PlayerState 296 a", "state": "0x727e6c58"},
+      {"identity": "PlayerState 296 b", "state": "0x8af6c1c5"},
+      {"identity": "PlayerState 296 c", "state": "0x5f60611c"},
+      {"identity": "PlayerState 298", "state": "0x2baf474b"}
+    ],
+    "mixed_a_solutions": {
+      "0x727e4258": ["0x252d102e", "0xd72ef704"],
+      "0x72735e58": ["0x43da5db5"],
+      "0xbbd80bc5": [],
+      "0x0d8191fe": ["0x0ad95405"],
+      "0xbbd835c5": ["0x4cf7cc18", "0xfef9b2ee"],
+      "0x7aaa8369": ["0x78c7cdcd"],
+      "0xc4271bf0": ["0x00166c66"],
+      "0x727e6c58": ["0x0c282a64"],
+      "0x8af6c1c5": ["0x8fda7f07"],
+      "0x5f60611c": [],
+      "0x2baf474b": ["0x41d933b7", "0xf3db1a8d"]
+    },
+    "state1_low_bytes": [
+      {"seed": 51, "value": "0x92"},
+      {"seed": 49, "value": "0xf0"},
+      {"seed": 429, "value": "0xcf"},
+      {"seed": 447, "value": "0x0c"},
+      {"seed": 445, "value": "0xcf"},
+      {"seed": 443, "value": "0xe6"},
+      {"seed": 441, "value": "0x44"}
+    ],
+    "expected": {
+      "identity": "PlayerState 274",
+      "state": "0x727e4258",
+      "seed_addend": "0xe92064a1",
+      "subtract_offset": "0x5f",
+      "equivalent_add_offset": "0x21",
+      "tail_xor": "0xa1"
+    }
+  }
+}

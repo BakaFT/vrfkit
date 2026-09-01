@@ -13,16 +13,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import check_docs as guard  # noqa: E402
 
 
-USAGE_MENTIONING_EVERYTHING = " ".join(
-    p.name for p in (guard.REPO / "tools").glob("*.py")
-)
+USAGE_MENTIONING_EVERYTHING = " ".join(guard.shipped_tools())
 
 
 class ToolCoverageTests(unittest.TestCase):
     def test_an_undocumented_tool_is_reported(self):
         problems = guard.check_tools("only_one.py is documented")
         self.assertTrue(problems)
-        self.assertTrue(any("never mentions it" in p for p in problems))
+        self.assertTrue(any("never mention it" in p for p in problems))
 
     def test_documenting_a_tool_that_does_not_exist_is_reported(self):
         text = USAGE_MENTIONING_EVERYTHING + " imaginary_tool.py"
@@ -73,8 +71,9 @@ class LinkTests(unittest.TestCase):
         self.assertEqual(guard.check_links(guard.USAGE, text), [])
 
     def test_the_shipped_docs_have_no_dead_links(self):
-        for path in (guard.README, guard.USAGE):
-            self.assertEqual(guard.check_links(path, guard.read(path)), [], path.name)
+        for relative in guard.ALL_DOCS:
+            path = guard.REPO / relative
+            self.assertEqual(guard.check_links(path, guard.read(path)), [], relative)
 
 
 class TableSizeTests(unittest.TestCase):

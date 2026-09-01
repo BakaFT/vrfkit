@@ -19,11 +19,12 @@ by Michel Giehl; see [`NOTICE.md`](NOTICE.md). Not affiliated with, endorsed
 by, or approved by Riot Games.
 
 **Current state:** `cargo +1.86.0 test --workspace --locked` **608 passing**,
-`tools/tests` **556 passing** -- see [Status](#status) for the rest.
+`tools/tests` **560 passing** -- see [Status](#status) for the rest.
 
 - Run it: [`docs/USAGE.md`](docs/USAGE.md)
 - What's extractable: [`docs/DATA.md`](docs/DATA.md)
 - Build it, test it, open a PR: [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- Recover a China release transform: [`docs/CHINA_RELEASE_BRINGUP.md`](docs/CHINA_RELEASE_BRINGUP.md)
 - Working conventions (for an AI agent): [`CLAUDE.md`](CLAUDE.md)
 
 ## Why this exists
@@ -141,6 +142,9 @@ asks for a different one, which is how a candidate transform for a new build
 gets measured -- the pass rate separates right from wrong almost binarily. It
 always exits 3, because a forced run measures a hypothesis rather than the file.
 See [Bringing up a new game build](CONTRIBUTING.md#bringing-up-a-new-game-build).
+For a Tencent branch with no usable source implementation, the replay-driven
+recovery procedure and committed evidence live in
+[China Release Transform Bring-up](docs/CHINA_RELEASE_BRINGUP.md).
 
 `export` is a default feature. Drop it with `--no-default-features` and
 `arrow`/`parquet`/`zstd` never enter the dependency tree:
@@ -310,7 +314,7 @@ it as one gives the year 3626.
 
 Work in progress. Currently verified: `cargo +1.86.0 test --workspace --locked`
 **608 passing**, strict workspace `clippy -D warnings` **0**, `cargo fmt` clean,
-and `check_ascii` on 121 files. The Python suite in `tools/tests` has 556 tests.
+and `check_ascii` on 121 files. The Python suite in `tools/tests` has 560 tests.
 
 Re-measure per-crate counts with `cargo test -p <crate>`. Counts are omitted
 from the table below on purpose -- they go stale, and re-measuring is one line.
@@ -737,7 +741,10 @@ release-13.02's `0x79` and `0x533` are `11^2` and `11^3`, and release-12.10's
 `0x31` and `0x29` are `11^4` and `11^6` reduced mod 256.
 
 So adding a build is one `SeededTransform` impl: two constants and three word
-functions (`word64` / `word32` / `byte`); everything else is shared.
+functions (`word64` / `word32` / `byte`); everything else is shared. Recovering
+those values when a China build has no usable source implementation is a
+separate task; the measured procedure and reusable evidence tool are in
+[China Release Transform Bring-up](docs/CHINA_RELEASE_BRINGUP.md).
 
 **13.02 and 13.04 are confirmed by live measurement, not only golden
 vectors.** A 527-replay machine-local sweep on 2026-08-31 covered all three

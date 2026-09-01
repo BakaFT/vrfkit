@@ -22,6 +22,7 @@ derives analytical views.
 | What can I get out of a replay, and is it typed? | `docs/DATA.md` |
 | How do I run it, and what does each tool do? | `docs/USAGE.md` |
 | How do I build, test, and what must pass? | `CONTRIBUTING.md` |
+| How is a source-free China release transform recovered? | `docs/CHINA_RELEASE_BRINGUP.md` |
 | Why is the code shaped this way? | the doc comment next to it |
 | What was tried and rejected? | `docs/archive/` |
 
