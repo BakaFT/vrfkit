@@ -82,6 +82,11 @@ UNRESOLVED_CLASS_NET_CACHE_PAYLOAD_FIELD_NAME = (
     "__vrfkit_unresolved_class_net_cache_payload__"
 )
 
+# A RepLayout suffix that could not be named is preservation data, not a
+# replicated property. Rust emits this marker only after retaining every
+# walkable field before the suffix.
+UNPARSED_REP_LAYOUT_TAIL_FIELD_NAME = "__vrfkit_unparsed_rep_layout_tail__"
+
 # The group-path suffix that separates an RPC group from a replicated property
 # group. Shared with vrf-schema's CLASS_NET_CACHE_SUFFIX; the two are pinned
 # together by crates/vrfkit/tests/adapter_contract.rs, because a drift here
@@ -1954,6 +1959,7 @@ def _group_rows(cols: _FieldColumns):
     # adapter's own count of the rows it actually saw makes the two
     # comparable instead of leaving the skip invisible.
     unresolved_cnc_rows = 0
+    unparsed_rep_layout_tail_rows = 0
 
     col_time = cols.time_ms
     col_pid = cols.packet_id
@@ -1966,6 +1972,9 @@ def _group_rows(cols: _FieldColumns):
     for i in range(cols.n_rows):
         if col_fn[i] == UNRESOLVED_CLASS_NET_CACHE_PAYLOAD_FIELD_NAME:
             unresolved_cnc_rows += 1
+            continue
+        if col_fn[i] == UNPARSED_REP_LAYOUT_TAIL_FIELD_NAME:
+            unparsed_rep_layout_tail_rows += 1
             continue
 
         actor = col_actor[i]
@@ -1988,7 +1997,8 @@ def _group_rows(cols: _FieldColumns):
             # the inventory look like a single slot.
             prop_groups[(pid, actor, col_obj[i], gp)].append(i)
 
-    return actor_first, actor_last, prop_groups, rpc_groups, unresolved_cnc_rows
+    return (actor_first, actor_last, prop_groups, rpc_groups,
+            unresolved_cnc_rows, unparsed_rep_layout_tail_rows)
 
 
 #: `actors.event` -> the bundle event type it publishes as. THREE values, not
@@ -2853,7 +2863,7 @@ def _convert_into(export_dir: Path, output_dir: Path, *, verbose: bool = False):
     if verbose:
         print("Grouping rows into events...")
     (actor_first, actor_last, prop_groups, rpc_groups,
-     unresolved_cnc_rows) = _group_rows(cols)
+     unresolved_cnc_rows, unparsed_rep_layout_tail_rows) = _group_rows(cols)
     if verbose:
         print(f"  {len(prop_groups):,} property events, {len(rpc_groups):,} RPC invocations")
         print(f"  Grouped in {time.time()-t0:.1f}s")
@@ -2972,6 +2982,7 @@ def _convert_into(export_dir: Path, output_dir: Path, *, verbose: bool = False):
         "server_timeline_events_written": len(timeline_events),
         "field_rows_read": cols.n_rows,
         "field_rows_unresolved_class_net_cache": unresolved_cnc_rows,
+        "field_rows_unparsed_rep_layout_tail": unparsed_rep_layout_tail_rows,
         "upstream_row_counts": upstream_row_counts,
         # Every conversion loss this run recorded, printed below as well.
         # Written even when empty: `{}` says the counters ran and found

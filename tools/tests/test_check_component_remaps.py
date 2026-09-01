@@ -84,6 +84,7 @@ class VerdictTests(unittest.TestCase):
         counts = guard.bare_counts({
             "AbilitiesAndBuffsComponent": collections.Counter({
                 "_cnc_h1": 4683,
+                "__vrfkit_unparsed_rep_layout_tail__": 286,
                 "__vrfkit_unresolved_class_net_cache_payload__": 4683,
             }),
             "ZoomStateMachine": collections.Counter({"CurrentState": 70}),

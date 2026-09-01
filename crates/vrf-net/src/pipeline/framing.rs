@@ -12,14 +12,15 @@
 //!
 //! # Failure policy
 //!
-//! Three depths can fail and each is counted separately, because they mean
+//! Four depths can fail and each is counted separately, because they mean
 //! different things:
 //!
 //! - the block header or its bit count could not be read -- the rest of the
 //!   bunch is unframeable and is abandoned;
 //! - the declared bit count overruns the bunch -- likewise;
+//! - the declared payload could not be transformed -- that block is unreadable;
 //! - the payload decoded but its inner stream did not walk -- only that one
-//!   block's bits are lost, and the sink is told which class it was.
+//!   block's suffix is unresolved, and the sink is told which class it was.
 
 use vrf_bitio::BitReader;
 use vrf_transform::TransformVersion;
@@ -159,7 +160,7 @@ pub(super) fn frame_content_blocks(
     }
 }
 
-/// Decode a block payload into `stage.scratch` and return the byte length, or
+/// Decode a block payload into `stage.scratch` and return its byte length, or
 /// `None` when the transform failed (already counted).
 ///
 /// The scratch buffer is grown, never shrunk, and its tail past `byte_count` is
@@ -244,14 +245,31 @@ pub(super) fn decode_and_parse_rep_layout(
         Ok((count, abandoned_bits)) => {
             stage.stats.fields += u64::from(count);
             if abandoned_bits != 0 {
-                sink.on_stream_failure(StreamFailure {
+                let consumed_bits = (bit_count as u64).saturating_sub(abandoned_bits);
+                let failure = StreamFailure {
                     kind: StreamKind::RepLayout,
                     actor_net_guid,
                     bit_count: bit_count as u32,
                     function_count: 0,
-                    consumed_bits: (bit_count as u64).saturating_sub(abandoned_bits),
+                    consumed_bits,
                     remaining_bits: abandoned_bits,
-                });
+                };
+
+                // `parse_rep_layout` reports the entire unparsed suffix: after
+                // an early terminator it starts immediately after that
+                // terminator; after a declared-payload overrun it starts at the
+                // doomed record's handle. Re-slice the decoded block at that
+                // exact bit offset so the sink can archive what was not named.
+                let mut tail_reader = BitReader::with_bit_len(stage.scratch, bit_count as u64)
+                    .expect("the decoded block already formed this bounded window");
+                if tail_reader.skip_bits(consumed_bits).is_ok() {
+                    if let Ok(tail) = tail_reader.sub_reader(abandoned_bits) {
+                        sink.on_unparsed_rep_layout_tail(failure, tail);
+                        stage.stats.rep_layout_tails_preserved += 1;
+                    }
+                }
+
+                sink.on_stream_failure(failure);
                 stage.stats.field_stream_failures += 1;
             }
             stage.stats.skipped_bits += abandoned_bits;

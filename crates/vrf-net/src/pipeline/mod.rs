@@ -165,6 +165,13 @@ pub trait ReplicationSink: GuidPathSink + FieldSink {
     /// exactly `ceil(failure.bit_count / 8)` bytes, with unused high bits in
     /// the final byte cleared. The parser has consumed no payload bits.
     fn on_unresolved_class_net_cache_payload(&mut self, _failure: StreamFailure, _payload: &[u8]) {}
+
+    /// Preserve the exact decoded suffix a RepLayout walk could not name.
+    ///
+    /// Fields before the suffix have already been emitted. `tail` starts after
+    /// an early terminator or at the beginning of a malformed record, and is
+    /// bounded to `failure.remaining_bits`.
+    fn on_unparsed_rep_layout_tail(&mut self, _failure: StreamFailure, _tail: BitReader<'_>) {}
 }
 
 /// Leaf asset name of the VALORANT replay controller.
@@ -625,6 +632,7 @@ mod tests {
         rpcs: Vec<(u32, u32)>,
         stream_failures: Vec<StreamFailure>,
         unresolved_payloads: Vec<(StreamFailure, Vec<u8>)>,
+        rep_layout_tails: Vec<(StreamFailure, u64, Vec<u8>)>,
         opens: Vec<u32>,
         closes: Vec<u32>,
         paths: Vec<(u32, String)>,
@@ -687,6 +695,14 @@ mod tests {
             payload: &[u8],
         ) {
             self.unresolved_payloads.push((failure, payload.to_vec()));
+        }
+
+        fn on_unparsed_rep_layout_tail(&mut self, failure: StreamFailure, mut tail: BitReader<'_>) {
+            let bit_count = tail.bits_remaining();
+            let mut payload = vec![0u8; (bit_count as usize).div_ceil(8)];
+            tail.copy_bits_to(&mut payload, bit_count)
+                .expect("tail reader is bounded to its payload");
+            self.rep_layout_tails.push((failure, bit_count, payload));
         }
     }
 
@@ -1594,6 +1610,56 @@ mod tests {
         assert_eq!(stats.rpc_stream_failures, 1);
         assert_eq!(stats.unresolved_rpc_payloads_preserved, 1);
         assert_eq!(stats.skipped_bits, 7);
+    }
+
+    #[test]
+    fn rep_layout_early_terminator_exposes_the_exact_tail() {
+        let mut decoded_bits = vec![false]; // property checksum
+        write_int_packed(&mut decoded_bits, 0); // early terminator at bit 9
+        let expected_tail = [true, false, true, true, false, false, true, false, true];
+        decoded_bits.extend_from_slice(&expected_tail);
+        assert_eq!(decoded_bits.len(), 18);
+
+        let mut decoded = vec![0u8; decoded_bits.len().div_ceil(8)];
+        for (index, bit) in decoded_bits.iter().copied().enumerate() {
+            if bit {
+                decoded[index / 8] |= 1 << (index % 8);
+            }
+        }
+        let wire = wire_for_short_decoded(&decoded, decoded_bits.len(), 2);
+        let mut payload = BitReader::with_bit_len(&wire, decoded_bits.len() as u64).unwrap();
+        let mut scratch = Vec::new();
+        let mut stats = NetStats::default();
+        let mut channels = ChannelTable::default();
+        let mut sink = TestSink::default();
+        let mut stage = Stage {
+            stats: &mut stats,
+            channels: &mut channels,
+            transform: TransformVersion::V1301,
+            scratch: &mut scratch,
+        };
+
+        framing::decode_and_parse_rep_layout(
+            &mut payload,
+            decoded_bits.len(),
+            NetworkGuid(2),
+            &mut stage,
+            &mut sink,
+        );
+
+        assert_eq!(payload.position(), decoded_bits.len() as u64);
+        assert!(sink.fields.is_empty());
+        assert_eq!(sink.rep_layout_tails.len(), 1);
+        let (failure, bit_count, tail) = &sink.rep_layout_tails[0];
+        assert_eq!(failure.kind, StreamKind::RepLayout);
+        assert_eq!(failure.consumed_bits, 9);
+        assert_eq!(failure.remaining_bits, 9);
+        assert_eq!(*bit_count, 9);
+        assert_eq!(tail, &[0x4d, 0x01]);
+        assert_eq!(tail[1] >> 1, 0, "high padding bits must stay zero");
+        assert_eq!(stats.field_stream_failures, 1);
+        assert_eq!(stats.rep_layout_tails_preserved, 1);
+        assert_eq!(stats.skipped_bits, 9);
     }
 
     /// A field stream that returns Ok but abandons bits mid-block must be a

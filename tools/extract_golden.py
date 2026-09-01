@@ -1,8 +1,9 @@
-"""Extract 66 fixture-backed payload-transform vectors, add 11 China 13.02
-vectors from the independent Python oracle, and emit a Rust test-data module.
+"""Extract payload-transform golden vectors from the upstream C# test suite
+and the independent regional Python oracles, then emit a Rust data module.
 
-Together these 77 vectors cover all seven registered transforms at every
-staging boundary.
+The upstream fixture supplies 66 vectors for six global builds; the Python
+oracles supply 22 more for release-china-13.02 and release-china-13.04.
+Together these 88 vectors cover all eight transforms at every staging boundary.
 
 Usage:
     python tools/extract_golden.py <ValorantSeededTransformTests.cs> <out.rs>
@@ -16,10 +17,20 @@ from pathlib import Path
 
 if __package__:
     from .atomic_io import atomic_write_text
-    from .china_transform_oracle import BRANCH as CHINA_BRANCH, ChinaTransform
+    from .china_transform_oracle import (
+        BRANCH as CHINA_1302_BRANCH,
+        CHINA_1304_BRANCH,
+        China1304Transform,
+        ChinaTransform,
+    )
 else:  # direct script execution
     from atomic_io import atomic_write_text
-    from china_transform_oracle import BRANCH as CHINA_BRANCH, ChinaTransform
+    from china_transform_oracle import (
+        BRANCH as CHINA_1302_BRANCH,
+        CHINA_1304_BRANCH,
+        China1304Transform,
+        ChinaTransform,
+    )
 
 # Builds whose vectors are lifted from the C# fixture -- an implementation
 # written by someone else, which is what makes them an independent check.
@@ -32,12 +43,17 @@ EXPECTED_BRANCHES = (
     "++Ares-Core+release-13.04",
 )
 
-# Historical fixtures carried release-china-13.02 vectors from an
+# Historical China fixtures carried release-china-13.02 vectors from an
 # implementation whose 32-bit and byte lanes zeroed their input. Current global
-# fixtures omit the regional branch. If those rows are encountered they are
-# discarded; China 13.02 always comes from the independent Python oracle.
-ORACLE_BRANCHES = (CHINA_BRANCH,)
-SUPERSEDED_FIXTURE_BRANCHES = (CHINA_BRANCH,)
+# fixtures omit both regional branches. If regional rows are encountered they
+# are discarded; both China builds below always come from the independent
+# Python oracle.
+ORACLE_TRANSFORMS = (
+    (CHINA_1302_BRANCH, ChinaTransform),
+    (CHINA_1304_BRANCH, China1304Transform),
+)
+ORACLE_BRANCHES = tuple(branch for branch, _ in ORACLE_TRANSFORMS)
+SUPERSEDED_FIXTURE_BRANCHES = ORACLE_BRANCHES
 
 SBOX_RS = Path(__file__).resolve().parent.parent / "crates/vrf-transform/src/sbox.rs"
 EXPECTED_BOUNDARIES = (0, 1, 7, 8, 31, 32, 63, 64, 65, 287, 288)
@@ -92,13 +108,15 @@ def main(argv: list[str]) -> int:
             f"found {len(cases)}"
         )
 
-    # Compute the oracle-backed builds over the same payload and seed rule.
+    # Compute the oracle-backed regional builds over the same payload and seed
+    # rule as the fixture.
     payload = bytes.fromhex(strings["PayloadHex"])
-    china = ChinaTransform(SBOX_RS)
-    for bits in EXPECTED_BOUNDARIES:
-        seed = bits ^ ints["ActorNetGuid"]
-        out = china.transform(payload, bits, seed)
-        cases.append((CHINA_BRANCH, bits, out.hex().upper()))
+    for branch, oracle_type in ORACLE_TRANSFORMS:
+        oracle = oracle_type(SBOX_RS)
+        for bits in EXPECTED_BOUNDARIES:
+            seed = bits ^ ints["ActorNetGuid"]
+            out = oracle.transform(payload, bits, seed)
+            cases.append((branch, bits, out.hex().upper()))
 
     pairs = {(branch, bits) for branch, bits, _ in cases}
     expected_pairs = {
@@ -132,9 +150,9 @@ def main(argv: list[str]) -> int:
         "// Provenance differs by build, and it matters:",
         "//   - the six release-* builds are lifted from the upstream C# fixture,",
         "//     an implementation written by someone else;",
-        "//   - release-china-13.02 is computed by tools/china_transform_oracle.py,",
-        "//     because the fixture's vectors for it encode a routine whose 32-bit",
-        "//     and byte lanes were never recovered and zero their input instead.",
+        "//   - release-china-13.02 and release-china-13.04 are computed by",
+        "//     tools/china_transform_oracle.py; the former replaces known-wrong",
+        "//     fixture stubs and the latter is absent from that fixture.",
         "//",
         f"// {len(cases)} vectors across {len(branches)} builds. Bit counts are chosen to",
         "// exercise every staging boundary of the transform: 0, 1, 7 (tail only),",

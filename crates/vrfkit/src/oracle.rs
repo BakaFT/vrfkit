@@ -230,21 +230,29 @@ impl Verdict {
 /// `unfinished_partials` is a hard failure.
 fn verdict_from_stats(stats: &NetStats, replay_data_trailing_bytes: u64) -> Verdict {
     let total_with_content = stats.rep_layout_blocks + stats.class_net_cache_blocks;
-    let rpc_payloads_lost = stats
-        .rpc_stream_failures
-        .saturating_sub(stats.unresolved_rpc_payloads_preserved);
     let failures = stats.malformed_packets
         + stats.unfinished_partials
         + stats.channel_state_limit_failures
         + stats.partial_resource_limit_failures
         + stats.bunch_header_failures
-        + stats.content_block_framing_failures
-        + stats.malformed_content_blocks
-        + stats.transform_failures
-        + stats.field_stream_failures
-        + rpc_payloads_lost
+        + stats.lost_content_blocks()
         + u64::from(replay_data_trailing_bytes != 0);
     Verdict::decide(total_with_content, failures)
+}
+
+/// Passed-block count and display ratio for the classified content blocks.
+///
+/// Framing can fail before a block is classified, so `failed` is not bounded by
+/// `total`. Saturating the count and deriving the ratio from that count keeps
+/// both values consistent and the printed percentage inside 0..=100.
+fn oracle_pass_rate(total: u64, failed: u64) -> (u64, f64) {
+    let passed = total.saturating_sub(failed);
+    let rate = if total == 0 {
+        0.0
+    } else {
+        passed as f64 / total as f64
+    };
+    (passed, rate)
 }
 
 /// Run the validate oracle. If `diagnostics` is true, print full diagnostic
@@ -360,6 +368,10 @@ pub fn run(
     println!("    Malformed framing:  {malformed}");
     println!("    Transform failed:   {}", stats.transform_failures);
     println!("    Field stream failed:{}", stats.field_stream_failures);
+    println!(
+        "    RepLayout tail/raw:{}",
+        stats.rep_layout_tails_preserved
+    );
     println!("    RPC payload lost:   {rpc_payloads_lost}");
     println!(
         "    RPC unresolved/raw:{}",
@@ -390,8 +402,9 @@ pub fn run(
     println!();
 
     // Oracle verdict: the fraction of content blocks (RepLayout + ClassNetCache)
-    // that framed, decoded and walked cleanly. With a correct transform this
-    // should be 100%; a wrong one collapses it toward zero.
+    // that framed, decoded, walked, or had their uninterpreted suffix preserved.
+    // With a correct transform this should be 100%; a wrong one collapses toward
+    // zero.
     let total_with_content = rep_layout + class_net;
     let verdict = match transform_override {
         Some(_) => Verdict::Probe,
@@ -408,8 +421,7 @@ pub fn run(
         // `total_with_content`, and the passed-block count is saturated at 0
         // rather than wrapping to u64::MAX on the `- failed` a release build's
         // disabled overflow checks would not catch.
-        let passed = total_with_content.saturating_sub(failed);
-        let pass_rate = 1.0 - (failed as f64 / total_with_content as f64);
+        let (passed, pass_rate) = oracle_pass_rate(total_with_content, failed);
         println!(
             "  ORACLE PASS RATE:     {:.6}% ({} / {} blocks passed)",
             pass_rate * 100.0,
@@ -418,7 +430,7 @@ pub fn run(
         );
         if stats.skipped_bits > 0 {
             println!(
-                "  (skipped {} bits across {} failed blocks)",
+                "  ({} skipped/uninterpreted bits; {} content blocks lost)",
                 stats.skipped_bits, failed
             );
         }
@@ -508,7 +520,9 @@ fn checkpoint_scope_note(checkpoint_chunks: u64) -> Option<String> {
 /// The one-line conclusion printed under `VERDICT:`.
 fn verdict_line(verdict: Verdict) -> &'static str {
     match verdict {
-        Verdict::Passed => "PASS - all ReplayData was consumed and decoded (exit 0)",
+        Verdict::Passed => {
+            "PASS - all present ReplayData content was consumed or preserved (exit 0)"
+        }
         Verdict::ValidationFailed => "FAIL - ReplayData validation found loss (exit 1)",
         Verdict::NoContentBlocks => "CANNOT VALIDATE - no content blocks found (exit 2)",
         Verdict::Probe => {
@@ -620,7 +634,9 @@ fn print_diagnostic_event(index: usize, ev: &DiagnosticEvent) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Verdict, checkpoint_scope_note, verdict_from_stats};
+    use super::{
+        Verdict, checkpoint_scope_note, oracle_pass_rate, verdict_from_stats, verdict_line,
+    };
     use vrf_net::stats::NetStats;
 
     /// The chunks this oracle does not walk have to say so themselves.
@@ -659,6 +675,13 @@ mod tests {
         assert_eq!(Verdict::decide(1_000, 0), Verdict::Passed);
         assert_eq!(Verdict::decide(1_000, 1), Verdict::ValidationFailed);
         assert_eq!(Verdict::decide(0, 0), Verdict::NoContentBlocks);
+        assert!(verdict_line(Verdict::Passed).contains("consumed or preserved"));
+        assert_eq!(oracle_pass_rate(10, 3), (7, 0.7));
+        assert_eq!(
+            oracle_pass_rate(1, 2),
+            (0, 0.0),
+            "pre-classification failures must not print a negative pass rate"
+        );
     }
 
     #[test]

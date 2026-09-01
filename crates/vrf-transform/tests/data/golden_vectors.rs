@@ -5,11 +5,11 @@
 // Provenance differs by build, and it matters:
 //   - the six release-* builds are lifted from the upstream C# fixture,
 //     an implementation written by someone else;
-//   - release-china-13.02 is computed by tools/china_transform_oracle.py,
-//     because the fixture's vectors for it encode a routine whose 32-bit
-//     and byte lanes were never recovered and zero their input instead.
+//   - release-china-13.02 and release-china-13.04 are computed by
+//     tools/china_transform_oracle.py; the former replaces known-wrong
+//     fixture stubs and the latter is absent from that fixture.
 //
-// 77 vectors across 7 builds. Bit counts are chosen to
+// 88 vectors across 8 builds. Bit counts are chosen to
 // exercise every staging boundary of the transform: 0, 1, 7 (tail only),
 // 8 (one byte), 31/32 (32-bit word edge), 63/64/65 (64-bit word edge) and
 // 287/288 (multi-word with and without a partial tail).
@@ -21,7 +21,7 @@ pub const PAYLOAD_HEX: &str = "BFDF6F9EA1F27BA00000C66EAFAF2E0000339C0DD34B0C45C
 pub const ACTOR_NET_GUID: u32 = 2;
 
 /// `(branch, bit_count, expected_output_hex)`
-pub const VECTORS: [(&str, usize, &str); 77] = [
+pub const VECTORS: [(&str, usize, &str); 88] = [
     ("++Ares-Core+release-12.10", 0, ""),
     ("++Ares-Core+release-12.10", 1, "01"),
     ("++Ares-Core+release-12.10", 7, "5F"),
@@ -99,4 +99,15 @@ pub const VECTORS: [(&str, usize, &str); 77] = [
     ("++Ares-Core+release-china-13.02", 65, "55CA63CD62E6793C01"),
     ("++Ares-Core+release-china-13.02", 287, "C79E0227D3957190EB464EE55D916E857B1E192CA4FBEB732EA33C53FFF8A434ECEC1038"),
     ("++Ares-Core+release-china-13.02", 288, "F3E6793C34CA634D083BD072CDEFDDDD83A7ABB6118420D3829CDF62906E7E26C65D34AB"),
+    ("++Ares-Core+release-china-13.04", 0, ""),
+    ("++Ares-Core+release-china-13.04", 1, "01"),
+    ("++Ares-Core+release-china-13.04", 7, "1B"),
+    ("++Ares-Core+release-china-13.04", 8, "AB"),
+    ("++Ares-Core+release-china-13.04", 31, "7091865D"),
+    ("++Ares-Core+release-china-13.04", 32, "05FBFBFD"),
+    ("++Ares-Core+release-china-13.04", 63, "F7F2FBFD2F26D141"),
+    ("++Ares-Core+release-china-13.04", 64, "4B8505B6FCFD79F6"),
+    ("++Ares-Core+release-china-13.04", 65, "4B8505A2FDFD79F601"),
+    ("++Ares-Core+release-china-13.04", 287, "488505DAFDFD79F6118E864F010076635FDB2C7ACD00B039754D5C910323C0C611E6385A"),
+    ("++Ares-Core+release-china-13.04", 288, "58850536FCFD79F618B2A32C010076633496E5D1CC00B0391BF170200323C0C6F3A4DCB7"),
 ];

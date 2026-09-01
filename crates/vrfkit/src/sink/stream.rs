@@ -11,9 +11,14 @@ use smallvec::SmallVec;
 use vrf_bitio::BitReader;
 use vrf_decode::apply_overlay_with_checksum;
 use vrf_decode::cnc::decode_cnc_payload;
-use vrf_export::{ActorRecord, MovementRecord, UNRESOLVED_CLASS_NET_CACHE_PAYLOAD_FIELD_NAME};
+use vrf_export::{
+    ActorRecord, MovementRecord, UNPARSED_REP_LAYOUT_TAIL_FIELD_NAME,
+    UNRESOLVED_CLASS_NET_CACHE_PAYLOAD_FIELD_NAME,
+};
 use vrf_net::content::ContentBlockHeader;
 use vrf_net::field::FieldSink;
+#[cfg(test)]
+use vrf_net::pipeline::StreamKind;
 use vrf_net::pipeline::{ActorChannelState, ReplicationSink, StreamFailure};
 use vrf_net::types::NetworkGuid;
 
@@ -413,7 +418,6 @@ impl ReplicationSink for ExportSink<'_> {
         } else {
             None
         };
-
         // Spawn location (only for dynamic actors that have it).
         let (spawn_x, spawn_y, spawn_z) = match state.spawn_location {
             Some(loc) => (Some(loc.x as f32), Some(loc.y as f32), Some(loc.z as f32)),
@@ -532,6 +536,22 @@ impl ReplicationSink for ExportSink<'_> {
         _header: &ContentBlockHeader,
     ) {
         self.stats.content_blocks += 1;
+    }
+
+    fn on_unparsed_rep_layout_tail(&mut self, failure: StreamFailure, tail: BitReader<'_>) {
+        let bit_count = u32::try_from(failure.remaining_bits)
+            .expect("a RepLayout tail cannot exceed its u32 block length");
+        let field_name = self
+            .channel_state
+            .names
+            .intern(UNPARSED_REP_LAYOUT_TAIL_FIELD_NAME);
+        self.push_field(FieldValues {
+            handle: u32::MAX,
+            field_name: Some(field_name),
+            bit_count,
+            raw_bits: copy_raw_bits(tail, bit_count),
+            ..FieldValues::default()
+        });
     }
 
     fn on_unresolved_class_net_cache_payload(&mut self, failure: StreamFailure, payload: &[u8]) {
@@ -730,6 +750,55 @@ mod tests {
         assert_eq!(sink.stats.overlay.raw_or_skip, 0);
         assert_eq!(sink.stats.overlay.not_in_table, 0);
         assert_eq!(sink.stats.overlay.no_field_name, 0);
+    }
+
+    #[test]
+    fn unparsed_rep_layout_tail_emits_one_distinguished_row() {
+        let mut cache = NetGuidCache::new();
+        let mut channel_state = ChannelState::new();
+        let mut records = RecordBuffers::default();
+        let mut sink = ExportSink::new(&mut cache, &mut channel_state, &mut records);
+        sink.time_ms = 1234;
+        sink.packet_id = 56;
+        sink.current_channel = 7;
+        sink.current_actor_guid = 89;
+        sink.current_object_guid = Some(144);
+        sink.set_current_group_path(Arc::from("/Script/ShooterGame.AresAbilitySystemComponent"));
+
+        let failure = StreamFailure {
+            kind: StreamKind::RepLayout,
+            actor_net_guid: NetworkGuid(89),
+            bit_count: 100,
+            function_count: 0,
+            consumed_bits: 91,
+            remaining_bits: 9,
+        };
+        let payload = [0b1010_0110, 0b1111_1111];
+        let tail = BitReader::with_bit_len(&payload, 9).expect("bounded tail");
+        sink.on_unparsed_rep_layout_tail(failure, tail);
+
+        assert_eq!(sink.records.fields.len(), 1);
+        let row = &sink.records.fields[0];
+        assert_eq!(row.time_ms, 1234);
+        assert_eq!(row.packet_id, 56);
+        assert_eq!(row.channel_index, 7);
+        assert_eq!(row.actor_net_guid, 89);
+        assert_eq!(row.object_net_guid, Some(144));
+        assert_eq!(
+            row.group_path.as_ref(),
+            "/Script/ShooterGame.AresAbilitySystemComponent"
+        );
+        assert_eq!(row.handle, u32::MAX);
+        assert_eq!(
+            row.field_name.as_deref(),
+            Some(vrf_export::UNPARSED_REP_LAYOUT_TAIL_FIELD_NAME)
+        );
+        assert_eq!(row.bit_count, 9);
+        assert_eq!(row.raw_bits.as_deref(), Some(&[0xa6, 0x01][..]));
+        assert!(row.value_i64.is_none());
+        assert!(row.value_f64.is_none());
+        assert!(row.value_bool.is_none());
+        assert!(row.value_str.is_none());
     }
 
     /// Encode `value` as Unreal's `IntPacked` into `bits`, LSB-first.

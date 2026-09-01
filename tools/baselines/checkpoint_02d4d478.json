@@ -6,6 +6,7 @@
   "export_groups": 475,
   "content_blocks": 608020,
   "rep_layout_blocks": 258892,
+  "rep_layout_tails_preserved": 0,
   "class_net_cache_blocks": 349119,
   "fields": 429637,
   "rpcs": 342735,
@@ -36,6 +37,7 @@
   "cp_frames": 18,
   "cp_frame_packets": 3691,
   "cp_field_rows": 78850,
+  "cp_rep_layout_tails_preserved": 0,
   "cp_struct_blobs_decoded": 35,
   "cp_struct_blobs_failed": 0
  },

@@ -110,6 +110,10 @@ pub(super) fn print(
             .saturating_sub(net_stats.unresolved_rpc_payloads_preserved),
         net_stats.unresolved_rpc_payloads_preserved
     );
+    eprintln!(
+        "  RepLayout tail:  {} preserved raw",
+        net_stats.rep_layout_tails_preserved
+    );
     // A separate line, not folded into "Content failures" above: that line's
     // exact format is read by `tools/check_export_baseline.py`. This counts
     // content blocks whose header or `content_bits` field could not even be
@@ -242,6 +246,10 @@ pub(super) fn print(
 }
 
 fn print_checkpoints(cp: &CheckpointStats) {
+    let field_payloads_lost = cp
+        .net
+        .field_stream_failures
+        .saturating_sub(cp.net.rep_layout_tails_preserved);
     let rpc_payloads_lost = cp
         .net
         .rpc_stream_failures
@@ -270,7 +278,7 @@ fn print_checkpoints(cp: &CheckpointStats) {
         cp.net.bunch_header_failures,
         cp.net.malformed_content_blocks,
         cp.net.transform_failures,
-        cp.net.field_stream_failures,
+        field_payloads_lost,
         rpc_payloads_lost,
         cp.net.unfinished_partials,
         cp.net.unfinished_partial_bits,
@@ -281,8 +289,8 @@ fn print_checkpoints(cp: &CheckpointStats) {
         cp.net.content_block_framing_failures
     );
     eprintln!(
-        "  Checkpoint raw:   {} unresolved RPC payloads preserved whole",
-        cp.net.unresolved_rpc_payloads_preserved
+        "  Checkpoint raw:   {} RepLayout tails / {} unresolved RPC payloads preserved",
+        cp.net.rep_layout_tails_preserved, cp.net.unresolved_rpc_payloads_preserved
     );
     eprintln!(
         "  Checkpoint life:  {} deleted / {} opens / {} closes / {} live reopens / {} opens without spawn",

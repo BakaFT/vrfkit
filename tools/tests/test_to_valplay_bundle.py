@@ -447,6 +447,7 @@ class EffectBlobBitLengthTests(unittest.TestCase):
 
 class BlockPayloadExclusionTests(unittest.TestCase):
     marker = "__vrfkit_unresolved_class_net_cache_payload__"
+    tail_marker = "__vrfkit_unparsed_rep_layout_tail__"
 
     @staticmethod
     def write_fields(path: Path, rows: list[dict]) -> None:
@@ -477,7 +478,7 @@ class BlockPayloadExclusionTests(unittest.TestCase):
     def bundle_files(path: Path) -> dict[str, bytes]:
         return {item.name: item.read_bytes() for item in sorted(path.iterdir())}
 
-    def test_block_payload_row_is_excluded_before_grouping_and_lifetimes(self):
+    def assert_preservation_row_is_excluded(self, marker, manifest_key):
         ordinary = [
             {
                 "time_ms": 10,
@@ -504,7 +505,7 @@ class BlockPayloadExclusionTests(unittest.TestCase):
             "actor": 303,
             "group_path": "AbilitiesAndBuffsComponent",
             "handle": (1 << 32) - 1,
-            "field_name": self.marker,
+            "field_name": marker,
             "bit_count": 5,
             "raw_bits": b"\x15",
         }
@@ -524,18 +525,12 @@ class BlockPayloadExclusionTests(unittest.TestCase):
             marked_summary = bundle.convert(marked_export, marked_bundle)
 
             self.assertEqual(marked_summary, base_summary)
-            # The DATA files must be byte-identical: the marker row changes
-            # nothing a consumer reads as an event or a position.
             for name in ("events.ndjson", "movement.ndjson"):
                 self.assertEqual(
                     (marked_bundle / name).read_bytes(),
                     (base_bundle / name).read_bytes(),
                     name,
                 )
-            # The manifest must NOT be identical. The row was on disk and was
-            # deliberately skipped; a manifest that read the same either way
-            # would be a bundle that cannot say how much preservation data its
-            # export carried.
             base_manifest = json.loads(
                 (base_bundle / "manifest.json").read_text(encoding="utf-8")
             )["adapter"]
@@ -543,13 +538,23 @@ class BlockPayloadExclusionTests(unittest.TestCase):
                 (marked_bundle / "manifest.json").read_text(encoding="utf-8")
             )["adapter"]
             self.assertEqual(base_manifest["field_rows_read"], 2)
-            self.assertEqual(base_manifest["field_rows_unresolved_class_net_cache"], 0)
+            self.assertEqual(base_manifest[manifest_key], 0)
             self.assertEqual(marked_manifest["field_rows_read"], 3)
-            self.assertEqual(marked_manifest["field_rows_unresolved_class_net_cache"], 1)
+            self.assertEqual(marked_manifest[manifest_key], 1)
             events = (marked_bundle / "events.ndjson").read_bytes()
             self.assertIn(b'"actor_net_guid":202', events)
             self.assertNotIn(b'"actor_net_guid":303', events)
-            self.assertNotIn(self.marker.encode(), events)
+            self.assertNotIn(marker.encode(), events)
+
+    def test_unresolved_block_payload_is_excluded_before_grouping_and_lifetimes(self):
+        self.assert_preservation_row_is_excluded(
+            self.marker, "field_rows_unresolved_class_net_cache"
+        )
+
+    def test_rep_layout_tail_is_excluded_before_grouping_and_lifetimes(self):
+        self.assert_preservation_row_is_excluded(
+            self.tail_marker, "field_rows_unparsed_rep_layout_tail"
+        )
 
 
 class CombatReportLeafNameTests(unittest.TestCase):

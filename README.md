@@ -18,8 +18,8 @@ Derived from [ValorantReplayParser](https://github.com/michel-giehl/ValorantRepl
 by Michel Giehl; see [`NOTICE.md`](NOTICE.md). Not affiliated with, endorsed
 by, or approved by Riot Games.
 
-**Current state:** `cargo +1.86.0 test --workspace --locked` **603 passing**,
-`tools/tests` **555 passing** -- see [Status](#status) for the rest.
+**Current state:** `cargo +1.86.0 test --workspace --locked` **608 passing**,
+`tools/tests` **556 passing** -- see [Status](#status) for the rest.
 
 - Run it: [`docs/USAGE.md`](docs/USAGE.md)
 - What's extractable: [`docs/DATA.md`](docs/DATA.md)
@@ -43,6 +43,7 @@ understood.
 | Build | Branch | Status | Verified by |
 |---|---|---|---|
 | **13.04** | `release-13.04` | ✅ Supported | Upstream golden vectors + 108-replay full export/checkpoint sweep |
+| **13.04 China** | `release-china-13.04` | ✅ Supported | 285,488 blocks at 100% + full export/checkpoint and semantic cross-check |
 | **13.02** | `release-13.02` | ✅ Supported | Preserved replay + 204-replay oracle sweep |
 | **13.02 China** | `release-china-13.02` | ✅ Supported | 2 replays / 893,665 blocks at 100% oracle |
 | **13.01** | `release-13.01` | ✅ Supported | 215-replay full corpus |
@@ -51,11 +52,11 @@ understood.
 | **12.10** | `release-12.10` | ✅ Supported | Preserved fixture + golden vectors |
 
 Branches are `++Ares-Core+release-<build>`, except the Tencent-published China
-client, which is `++Ares-Core+release-china-13.02`. It reports the same `13.02`
-format version as the global build and runs the same engine, but obfuscates
-payloads differently, so **the branch string and not the version number is what
-selects a transform.** Adding a build is one `SeededTransform` impl (two
-constants + three word functions); see
+clients, which use `++Ares-Core+release-china-<build>`. Each reports the same
+format version as its global counterpart and runs the same engine, but
+obfuscates payloads differently, so **the branch string and not the version
+number is what selects a transform.** Adding a build is one `SeededTransform`
+impl (two constants + three word functions); see
 [Adding a new build](#supported-builds-and-the-cost-of-a-new-build).
 
 ## Highlights
@@ -98,7 +99,7 @@ constants + three word functions); see
 - **Reproducible** — Parquet output is byte-for-byte identical run to run.
 - **No `unsafe`** — `#![forbid(unsafe_code)]` in every crate; the only FFI is
   Oodle, isolated in an external crate.
-- **603 tests** plus a layered validation suite (framing / bytes / decode
+- **608 tests** plus a layered validation suite (framing / bytes / decode
   errors / semantics).
 
 ## Table of contents
@@ -125,7 +126,7 @@ constants + three word functions); see
 ```bash
 cargo +1.86.0 build --release -p vrfkit --features export --locked
 
-vrfkit inspect  <file.vrf>                          # header / branch / chunk summary
+vrfkit inspect  <file.vrf> [--redact-identifiers]  # header / branch / chunk summary
 vrfkit validate <file.vrf> [--diagnostics] [--transform <branch>]   # grammar oracle, writes nothing
 vrfkit export   <file.vrf> --out <dir> [--checkpoints]
 ```
@@ -308,8 +309,8 @@ it as one gives the year 3626.
 ## Status
 
 Work in progress. Currently verified: `cargo +1.86.0 test --workspace --locked`
-**603 passing**, strict workspace `clippy -D warnings` **0**, `cargo fmt` clean,
-and `check_ascii` on 120 files. The Python suite in `tools/tests` has 555 tests.
+**608 passing**, strict workspace `clippy -D warnings` **0**, `cargo fmt` clean,
+and `check_ascii` on 121 files. The Python suite in `tools/tests` has 556 tests.
 
 Re-measure per-crate counts with `cargo test -p <crate>`. Counts are omitted
 from the table below on purpose -- they go stale, and re-measuring is one line.
@@ -317,7 +318,7 @@ from the table below on purpose -- they go stale, and re-measuring is one line.
 | Layer | Crate | Feature flags |
 |---|---|---|
 | Bit reader / UE wire format | `vrf-bitio` | `alloc` (default; drop it for `no_std`) |
-| Payload transform (7 builds) | `vrf-transform` | none (`ALL_VERSIONS` is a length-independent slice) |
+| Payload transform (8 builds) | `vrf-transform` | none (`ALL_VERSIONS` is a length-independent slice) |
 | Container (info/header/chunk/event/checkpoint, Oodle) | `vrf-container` | `oodle` `event` `checkpoint` |
 | DemoFrame traversal | `vrf-frame` | none (sections are byte ranges for cursor alignment) |
 | Replay dynamic schema + GUID cache + checkpoint tables | `vrf-schema` | `checkpoint` |
@@ -578,10 +579,19 @@ handle-minimum-width problem and went to 0.
 For any field whose inner stream can be walked, the raw bits are always
 exported; when the type is known, the `value_*` columns are filled **as an
 overlay.** If the type is unknown, or decoding fails, the row's `raw_bits`
-remains. The only exception is the unresolved ClassNetCache block above: it
-cannot be expanded into fields, so it emits one preservation row (`handle` =
-`u32::MAX`, full payload in `raw_bits`) and an explicit unresolved/raw
-diagnostic rather than pretending the properties were decoded.
+remains. Two preservation shapes cannot be represented as ordinary named
+fields:
+
+- An unidentified ClassNetCache block emits one row with
+  `field_name = __vrfkit_unresolved_class_net_cache_payload__` and its complete
+  decoded payload in `raw_bits`.
+- When a RepLayout walk ends before the declared block window, every field
+  before the unexplained suffix is emitted normally and that exact suffix emits
+  one row with `field_name = __vrfkit_unparsed_rep_layout_tail__` and
+  `handle = u32::MAX`.
+
+Both remain visible in failure/preservation counters and downstream adapters
+filter both marker rows rather than treating them as fields.
 
 The overlay table is extracted mechanically from the C# descriptors
 (`tools/extract_descriptors.py`) -- 199 groups, 1,258 entries, 84 handles.
@@ -704,8 +714,9 @@ the S-box table itself. What actually changes per build:
 | release-13.02 | `0x9e81a37c` | `0x04` | - | used |
 | release-china-13.02 | `0x9e70cf19` | `0x67` | - | used |
 | release-13.04 | `0x076dc658` | `0x28` | - | unused |
+| release-china-13.04 | `0xe92064a1` | `0x5f` | - | unused |
 
-In all seven builds the **tail-XOR byte equals the low byte of the seed
+In all eight builds the **tail-XOR byte equals the low byte of the seed
 addend.** It is a derived value, not an independent constant, and the
 relationship is pinned by a test in `versions/mod.rs` -- if a future build breaks
 the pattern, the test fails instead of the final byte silently corrupting.
@@ -745,9 +756,24 @@ The 13.04 subset was also exported with checkpoint decoding enabled. All 108
 replays contained checkpoints and reported zero typed-overlay errors, zero
 struct-blob failures and zero checkpoint failures over 110,152,399 offered
 rows, 20,756 decoded struct blobs, 3,129,483 decoded checkpoint fields and
-1,872 decoded checkpoint blobs. The machine-local corpus can rotate; the
-reproducible transform oracle is 77 vectors: 66 mechanically extracted
-upstream vectors plus 11 generated by the independent China 13.02 oracle.
+1,872 decoded checkpoint blobs.
+
+China 13.04 is independently measured on the preserved 21,190,421-byte replay
+`4bf66d93`: direct branch dispatch, without `--transform`, consumed
+285,488/285,488 ReplayData content blocks. Export with checkpoints reported
+zero lost blocks, malformed framing, transform failures, unread bytes,
+overlay errors, struct failures or array errors. It preserved 90 RepLayout
+suffixes (113,956 bits) and 1,753 unresolved RPC payloads from ReplayData, plus
+18 suffixes (6,450 bits) from checkpoints. A value-level cross-check mapped the
+54 `characterDeath` events through `manifest.players`, excluded the one
+self-kill from credited kills, and matched all ten players' final replicated
+K/D counts exactly; typed `RoundResults` independently gave seven rounds and a
+5-2 score.
+
+The machine-local corpora can rotate. The reproducible transform oracle is 88
+vectors: 66 mechanically extracted upstream vectors for the six global builds
+plus 22 independently generated regional vectors, all at the same 11 staging
+boundaries.
 
 The 768-byte S-box is shared across builds, which makes it usable as a
 **signature for locating the transform function in a binary.**
@@ -780,14 +806,14 @@ So decoding is split into two layers:
   value is emitted alongside it.
 
 If a field's format is discovered later, rows already exported need no
-re-parsing. The unresolved-ClassNetCache caveat still applies: those blocks
-emit only a preservation row (full payload), so re-interpreting them at field
-resolution requires re-exporting from the original `.vrf`.
+re-parsing. Unidentified ClassNetCache payloads and unexplained RepLayout
+suffixes instead emit distinguished preservation rows; they are retained
+exactly but are not presented as ordinary fields.
 
 ### 2. Minimal cost per build update
 
 See [Supported builds](#supported-builds-and-the-cost-of-a-new-build). Across
-seven builds the only per-build variables are two constants (seed addend,
+eight builds the only per-build variables are two constants (seed addend,
 offset) and a sign, plus whether the S-box stage is enabled; the PRNG,
 staging, tail-XOR, and S-box table are shared. A new build is one
 `SeededTransform` impl.
@@ -815,7 +841,7 @@ layered, and the layers catch different things:
 - **Framing** (`validate_corpus.py`, all 527 files) -- content-block framing,
   loss accounting and unresolved-payload preservation.
 - **Bytes** (`check_export_baseline.py`, per-file row and byte counts) --
-  regression in any of the 28 export counters.
+  regression in any of the 29 export counters.
 - **Decode** (`check_decode_errors_corpus.py`, scoped export corpora) -- overlay
   type errors and struct-blob failures; the current 13.04 scope is all 108 files
   with checkpoints enabled.

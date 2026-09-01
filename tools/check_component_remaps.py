@@ -76,10 +76,13 @@ PAIR_RE = re.compile(
 #: ~0.1%; a renamed component measured 15.6%. Nothing observed lands between.
 BARE_SHARE_LIMIT = 0.05
 
-#: Field names that mark a ClassNetCache block rather than a RepLayout property.
-#: Two of the remaps are RepLayout-only by design, so their RPC stream stays bare
-#: and must not be read as the remap failing.
-CNC_MARKERS = ("_cnc_h", "__vrfkit_unresolved_class_net_cache_payload__")
+#: Field-name fragments that mark preservation or recovered CNC rows rather
+#: than ordinary RepLayout properties. They must not contribute to remap ratios.
+NON_PROPERTY_MARKERS = (
+    "_cnc_h",
+    "__vrfkit_unparsed_rep_layout_tail__",
+    "__vrfkit_unresolved_class_net_cache_payload__",
+)
 
 
 class Verdict(NamedTuple):
@@ -121,13 +124,12 @@ def verdicts(pairs, rows_by_group) -> list[Verdict]:
 def bare_counts(fields_by_group) -> dict:
     """Bare rows per group, counting RepLayout blocks only.
 
-    `fields_by_group` maps a group path to a `Counter` of its field names.
-    ClassNetCache rows are dropped because the RepLayout-only remaps leave those
-    unresolved deliberately -- see `CNC_MARKERS`.
+    Preservation and recovered ClassNetCache rows are dropped because they are
+    not ordinary RepLayout properties -- see `NON_PROPERTY_MARKERS`.
     """
     return {
         group: sum(n for name, n in names.items()
-                   if not any(m in (name or "") for m in CNC_MARKERS))
+                   if not any(m in (name or "") for m in NON_PROPERTY_MARKERS))
         for group, names in fields_by_group.items()
     }
 

@@ -584,6 +584,10 @@ fn write_net_quality(
         ("malformed_content_blocks", stats.malformed_content_blocks),
         ("transform_failures", stats.transform_failures),
         ("field_stream_failures", stats.field_stream_failures),
+        (
+            "rep_layout_tails_preserved",
+            stats.rep_layout_tails_preserved,
+        ),
         ("rpc_stream_failures", stats.rpc_stream_failures),
         (
             "unresolved_rpc_payloads_preserved",
@@ -850,6 +854,7 @@ mod tests {
             "malformed_content_blocks",
             "transform_failures",
             "field_stream_failures",
+            "rep_layout_tails_preserved",
             "rpc_stream_failures",
             "unresolved_rpc_payloads_preserved",
             "actor_opens",
@@ -936,6 +941,7 @@ mod tests {
                 "malformed_content_blocks",
                 "transform_failures",
                 "field_stream_failures",
+                "rep_layout_tails_preserved",
                 "rpc_stream_failures",
                 "unresolved_rpc_payloads_preserved",
                 "actor_opens",

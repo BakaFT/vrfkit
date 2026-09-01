@@ -21,7 +21,7 @@
 //! # Per-build variation
 //!
 //! The algorithm skeleton has been stable from release-12.10 through
-//! release-13.04, including the Tencent-published release-china-13.02 branch.
+//! release-13.04, including both Tencent-published regional branches.
 //! What changes per build is two constants and the order of a handful of bit
 //! primitives; see [`versions`]. Adding a build means writing one `impl` with
 //! two constants and three word functions.
@@ -56,7 +56,7 @@
 //! [`TransformVersion`] is non-exhaustive, so adding a build does not change the
 //! registry's public type and external callers cannot match every future variant.
 //! Per-build gating would still remove existing, publicly named variants and is
-//! therefore not offered. The cost is small: the seven `impl`s are branch-free
+//! therefore not offered. The cost is small: the eight `impl`s are branch-free
 //! arithmetic, and the only sizeable data is the three S-box tables (used by
 //! release-13.00 and both release-13.02 branches).
 
@@ -66,7 +66,9 @@ pub mod helpers;
 pub mod sbox;
 pub mod versions;
 
-use versions::{SeededTransform, V12_10, V12_11, V13_00, V13_01, V13_02, V13_02China, V13_04};
+use versions::{
+    SeededTransform, V12_10, V12_11, V13_00, V13_01, V13_02, V13_02China, V13_04, V13_04China,
+};
 use vrf_bitio::{BitError, BitReader, Result as BitResult};
 
 /// Derive the transform seed for a content block.
@@ -166,6 +168,8 @@ pub enum TransformVersion {
     V1302China,
     /// `++Ares-Core+release-13.04`
     V1304,
+    /// `++Ares-Core+release-china-13.04`
+    V1304China,
 }
 
 /// Every transform this build of the crate knows about.
@@ -183,6 +187,7 @@ pub const ALL_VERSIONS: &[TransformVersion] = &[
     TransformVersion::V1302,
     TransformVersion::V1302China,
     TransformVersion::V1304,
+    TransformVersion::V1304China,
 ];
 
 /// A replay whose branch has no registered transform.
@@ -239,6 +244,7 @@ impl TransformVersion {
             Self::V1302 => V13_02::BRANCH,
             Self::V1302China => V13_02China::BRANCH,
             Self::V1304 => V13_04::BRANCH,
+            Self::V1304China => V13_04China::BRANCH,
         }
     }
 
@@ -258,6 +264,7 @@ impl TransformVersion {
             Self::V1302 => transform_in_place::<V13_02>(buf, bit_count, seed),
             Self::V1302China => transform_in_place::<V13_02China>(buf, bit_count, seed),
             Self::V1304 => transform_in_place::<V13_04>(buf, bit_count, seed),
+            Self::V1304China => transform_in_place::<V13_04China>(buf, bit_count, seed),
         }
     }
 
@@ -309,10 +316,14 @@ mod tests {
     }
 
     #[test]
-    fn release_13_04_is_registered() {
-        let branch = "++Ares-Core+release-13.04";
-        let version = TransformVersion::from_branch(branch);
-        assert_eq!(version.map(TransformVersion::branch), Some(branch));
+    fn release_13_04_branches_are_registered_exactly() {
+        for branch in [
+            "++Ares-Core+release-13.04",
+            "++Ares-Core+release-china-13.04",
+        ] {
+            let version = TransformVersion::from_branch(branch);
+            assert_eq!(version.map(TransformVersion::branch), Some(branch));
+        }
     }
 
     #[test]

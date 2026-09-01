@@ -1,28 +1,25 @@
-"""Independent Python implementation of the `release-china-13.02` payload transform.
+"""Independent Python implementations of the China payload transforms.
 
-Every other build's golden vectors are lifted from the upstream C# fixture,
+Every global build's golden vectors are lifted from the upstream C# fixture,
 which is an implementation written by someone else and therefore an independent
-check on our port. For this build that is not available: the C# fixture's
-China vectors encode a routine whose 32-bit and byte lanes were never
-recovered and were left zeroing their input, so six of its eleven vectors
-disagree with the real client. Lifting them would pin our port to a known-wrong
-oracle.
+check on our port. The regional builds need a separate oracle: China 13.02's
+fixture rows came from an implementation with zeroing 32-bit and byte lanes,
+and China 13.04 is absent from the fixture entirely.
 
-This module supplies the missing second implementation. It is written against
-the algorithm description rather than transliterated from the Rust, so it
-catches the failure this file exists to catch -- a transcription, masking or
-endianness slip in one of the two ports. It cannot, on its own, catch "the
-algorithm is wrong"; that is what validating against real replays does, and
-`versions::V13_02China` records the result (100.000000% of 893,665 content
-blocks framed across two replays).
+This module supplies those second implementations. It is written against the
+measured algorithm descriptions rather than transliterated from the Rust, so it
+catches transcription, masking and endianness slips between the two ports. It
+cannot, on its own, prove an algorithm recovered from the replay is right; the
+real-replay grammar oracle provides that independent evidence.
 
-The S-boxes are read from the generated Rust table rather than re-embedded: they
-are shared with the global builds, whose vectors DO come from the C# fixture, so
-a corrupt table would already be failing those.
+The S-boxes are read from the generated Rust table rather than re-embedded. Only
+China 13.02 uses them, and they are shared with global builds whose vectors come
+from the C# fixture, so a corrupt table is independently detectable.
 
 Usage:
-    from china_transform_oracle import ChinaTransform
+    from china_transform_oracle import ChinaTransform, China1304Transform
     ChinaTransform(sbox_path).transform(payload_bytes, bit_count, seed)
+    China1304Transform(sbox_path).transform(payload_bytes, bit_count, seed)
 """
 
 from __future__ import annotations
@@ -31,6 +28,7 @@ import re
 from pathlib import Path
 
 BRANCH = "++Ares-Core+release-china-13.02"
+CHINA_1304_BRANCH = "++Ares-Core+release-china-13.04"
 
 MASK8 = 0xFF
 MASK32 = 0xFFFF_FFFF
@@ -109,6 +107,10 @@ def substitute(value: int, table: list[int], byte_count: int) -> int:
 class ChinaTransform:
     """The `release-china-13.02` transform, staged 64 -> 32 -> 8 -> tail."""
 
+    SEED_ADDEND = SEED_ADDEND
+    INIT_A_OFFSET = INIT_A_OFFSET
+    TAIL_XOR = TAIL_XOR
+
     def __init__(self, sbox_rs: Path) -> None:
         tables = load_sboxes(sbox_rs)
         self.sbox8 = tables["SBOX_8"]
@@ -117,10 +119,10 @@ class ChinaTransform:
 
     # -- PRNG -------------------------------------------------------------
 
-    @staticmethod
-    def initial_prng_a(seed: int) -> int:
-        seed_plus = (seed + SEED_ADDEND) & MASK32
-        offset_term = ((seed - INIT_A_OFFSET) & MASK32) * 0x0200_0000 & MASK32
+    @classmethod
+    def initial_prng_a(cls, seed: int) -> int:
+        seed_plus = (seed + cls.SEED_ADDEND) & MASK32
+        offset_term = ((seed - cls.INIT_A_OFFSET) & MASK32) * 0x0200_0000 & MASK32
         mixed = ((((seed_plus >> 15) ^ seed_plus) >> 12) ^ offset_term ^ seed_plus) & MASK32
         return (mixed * MULTIPLIER) & MASK64
 
@@ -216,6 +218,42 @@ class ChinaTransform:
             left -= 8
         if left:
             mask = 0xFF >> (7 - ((bit_count - 1) & 7))
-            buf[offset] ^= mask & (stream_byte ^ TAIL_XOR)
+            buf[offset] ^= mask & (stream_byte ^ self.TAIL_XOR)
 
         return bytes(buf)
+
+
+class China1304Transform(ChinaTransform):
+    """The replay-recovered `release-china-13.04` transform."""
+
+    SEED_ADDEND = 0xE920_64A1
+    INIT_A_OFFSET = 0x5F
+    TAIL_XOR = 0xA1
+
+    def word64(self, value: int, state: int) -> int:
+        value = reverse64_no_16(value)
+        value ^= rotr(state, 6, 32, MASK32)
+        value = (value + rotr(state, 4, 32, MASK32)) & MASK64
+        value = (value + rotr(state, 3, 32, MASK32)) & MASK64
+        value = (value + rotr(state, 2, 32, MASK32)) & MASK64
+        return value ^ rotr(state, 1, 32, MASK32)
+
+    def word32(self, value: int, state: int) -> int:
+        value = reverse_bits(value, 32)
+        value ^= ~rotl(state, 6, 32, MASK32) & MASK32
+        value = (value + rotl(state, 4, 32, MASK32)) & MASK32
+        value = (value + rotl(state, 3, 32, MASK32)) & MASK32
+        value = (value + rotl(state, 2, 32, MASK32)) & MASK32
+        return value ^ (~rotl(state, 1, 32, MASK32) & MASK32)
+
+    def byte(self, value: int, state: int) -> int:
+        mixes = {
+            exponent: (state * (11 ** exponent)) & MASK32
+            for exponent in (1, 2, 3, 4, 6)
+        }
+        value = reverse_bits(value, 8)
+        value ^= ~mixes[6] & MASK8
+        value = (value + mixes[4]) & MASK8
+        value = (value + mixes[3]) & MASK8
+        value = (value + mixes[2]) & MASK8
+        return value ^ (~mixes[1] & MASK8)

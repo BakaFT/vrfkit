@@ -33,10 +33,20 @@ use std::sync::Arc;
 pub const UNRESOLVED_CLASS_NET_CACHE_PAYLOAD_FIELD_NAME: &str =
     "__vrfkit_unresolved_class_net_cache_payload__";
 
+/// Reserved `field_name` for a RepLayout suffix the field walker could not
+/// parse.
+///
+/// The preceding fields were walked normally; this row preserves only the
+/// suffix, beginning after an early terminator or at a malformed record. It is
+/// not an ordinary field, and the explicit marker lets consumers exclude it
+/// with one predicate.
+pub const UNPARSED_REP_LAYOUT_TAIL_FIELD_NAME: &str = "__vrfkit_unparsed_rep_layout_tail__";
+
 /// A single fields-table record ready for export.
 ///
-/// Most records represent one decoded field. The reserved whole-block record
-/// represents an unresolved ClassNetCache payload and carries no typed value.
+/// Most records represent one decoded field. Reserved preservation records
+/// represent either an unresolved ClassNetCache payload or an unparsed
+/// RepLayout suffix; both carry no typed value.
 ///
 /// The caller constructs these from the decoded replay stream. All "address"
 /// fields are non-optional; the value overlay fields are `Option` because a

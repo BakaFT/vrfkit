@@ -40,6 +40,7 @@ import pyarrow.parquet as pq
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from to_valplay_bundle import (  # noqa: E402
+    UNPARSED_REP_LAYOUT_TAIL_FIELD_NAME,
     UNRESOLVED_CLASS_NET_CACHE_PAYLOAD_FIELD_NAME,
 )
 
@@ -268,7 +269,10 @@ def compare_group_field_coverage(cs_events_path: Path, vk_parquet_path: Path):
         # A preserved whole-block payload is not a field, so it is not a pair
         # this comparison is about. Without this it lands in "vrfkit only" for
         # every unresolved group and reads as coverage we do not have.
-        if fn == UNRESOLVED_CLASS_NET_CACHE_PAYLOAD_FIELD_NAME:
+        if fn in {
+            UNPARSED_REP_LAYOUT_TAIL_FIELD_NAME,
+            UNRESOLVED_CLASS_NET_CACHE_PAYLOAD_FIELD_NAME,
+        }:
             continue
         vk_pairs.add((gp, fn))
 

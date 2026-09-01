@@ -22,7 +22,7 @@
 //! ## `fields` table -- sparse value columns vs. Union
 //!
 //! Every ordinary decoded-field record carries at most one typed value (i64,
-//! f64, bool, or str); whole-block preservation records carry none. We
+//! f64, bool, or str); preservation records carry none. We
 //! represent this as **four nullable columns** rather than an Arrow
 //! DenseUnion because:
 //!
@@ -86,7 +86,7 @@ pub mod writer;
 pub use error::ExportError;
 pub use record::{
     ActorRecord, EventRecord, FieldRecord, MovementRecord, NetGuidRecord,
-    UNRESOLVED_CLASS_NET_CACHE_PAYLOAD_FIELD_NAME,
+    UNPARSED_REP_LAYOUT_TAIL_FIELD_NAME, UNRESOLVED_CLASS_NET_CACHE_PAYLOAD_FIELD_NAME,
 };
 
 #[cfg(feature = "actors")]

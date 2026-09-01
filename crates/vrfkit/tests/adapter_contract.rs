@@ -197,6 +197,19 @@ fn adapter_pins_the_unresolved_class_net_cache_field_name() {
 }
 
 #[test]
+fn adapter_pins_the_unparsed_rep_layout_tail_field_name() {
+    let source = adapter_source();
+    let python = python_constant(&source, "UNPARSED_REP_LAYOUT_TAIL_FIELD_NAME")
+        .expect("the adapter must assign UNPARSED_REP_LAYOUT_TAIL_FIELD_NAME");
+    assert_eq!(
+        python,
+        vrf_export::UNPARSED_REP_LAYOUT_TAIL_FIELD_NAME,
+        "the adapter's reserved tail name no longer matches vrf-export's; \
+         preserved RepLayout tails would be published as decoded fields"
+    );
+}
+
+#[test]
 fn adapter_pins_the_class_net_cache_suffix() {
     let source = adapter_source();
     let python = python_constant(&source, "CLASS_NET_CACHE_SUFFIX")

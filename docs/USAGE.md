@@ -82,11 +82,13 @@ reports a pass rate. **It writes no files.**
   Total content blocks: 743110
   Malformed framing:  0          <- blocks whose framing slipped. Nonzero is serious
   Transform failed:   0          <- payload transform failed. Signals an unsupported build
+  Field stream failed:90         <- RepLayout blocks with an unexplained suffix
+  RepLayout tail/raw:90          <- exact suffixes preserved; this subset is not loss
   RPC payload lost:   0          <- unresolved payloads that were not preserved. Must stay zero
   RPC unresolved/raw: 7889       <- full decoded payload preserved, but inner handles cannot be named
   NOT COVERED:          18 Checkpoint chunk(s) were NOT walked
   ORACLE PASS RATE:     100.000000% (743110 / 743110 blocks passed)
-  VERDICT: PASS - all ReplayData was consumed and decoded (exit 0)
+  VERDICT: PASS - all present ReplayData content was consumed or preserved (exit 0)
 ```
 
 **Exit code**: `0` all ReplayData was consumed or explicitly preserved, `1`
@@ -284,18 +286,17 @@ to share its RPC name.
 fails.** At most one `value_*` column is filled. If a field's format is worked
 out later, rows already exported need no re-parsing.
 
-One exception: a ClassNetCache block whose group cannot be identified cannot be
-walked as an inner stream, so it is emitted only as a single **preservation
-row** and cannot be expanded into fields.
+Two reserved preservation rows are not ordinary fields or RPC parameters:
 
-| Column | Value |
-|---|---|
-| `field_name` | `__vrfkit_unresolved_class_net_cache_payload__` |
-| `handle` | `u32::MAX` |
-| `raw_bits` | Full payload |
+| Shape | `field_name` | `handle` | `raw_bits` |
+|---|---|---|---|
+| Unidentified ClassNetCache block | `__vrfkit_unresolved_class_net_cache_payload__` | `u32::MAX` | Full decoded block payload |
+| RepLayout walk ends before the block window | `__vrfkit_unparsed_rep_layout_tail__` | `u32::MAX` | Exact unparsed suffix |
 
-These blocks are counted under `validate`'s `RPC stream failed`, and
-re-interpreting them as fields requires re-exporting from the original `.vrf`.
+For a RepLayout tail, all walkable fields before the suffix are still emitted
+normally. Both markers are counted in `manifest.quality`, and
+`to_valplay_bundle.py` excludes them before event grouping and actor-lifetime
+tracking.
 
 Arrays are flattened, so names come out like
 `Rounds[3].Reports[1].Interactions[0].DamageDealt`. Filter with
@@ -454,8 +455,10 @@ Every loss and fallback counter for the run, including the checkpoint pass when
 | `event_payload_unknown_groups` | Event groups outside that measured vocabulary; their raw payload remains preserved. |
 | `event_layout_mismatches` | Known groups that failed any structural guard; all nullable overlay columns remain empty. |
 
-It is `malformed_content_blocks + transform_failures + field_stream_failures +
-max(0, rpc_stream_failures - unresolved_rpc_payloads_preserved)`, computed by
+It is `content_block_framing_failures + malformed_content_blocks +
+transform_failures + max(0, field_stream_failures -
+rep_layout_tails_preserved) + max(0, rpc_stream_failures -
+unresolved_rpc_payloads_preserved)`, computed by
 `NetStats::lost_content_blocks` and shared with `validate`'s summary so the two
 cannot drift.
 
@@ -475,7 +478,7 @@ Take only the layer you need. Every crate is `#![forbid(unsafe_code)]`, and
 | Layer | Crate | Feature flags |
 |---|---|---|
 | Bit reader / UE wire format | `vrf-bitio` | `alloc` (default; drop it for `no_std`) |
-| Payload transform (7 builds) | `vrf-transform` | none |
+| Payload transform (8 builds) | `vrf-transform` | none |
 | Container (info/header/chunk/event/checkpoint, Oodle) | `vrf-container` | `oodle` `event` `checkpoint` |
 | DemoFrame traversal | `vrf-frame` | none |
 | Dynamic schema + GUID cache + checkpoint tables | `vrf-schema` | `checkpoint` |
@@ -569,7 +572,7 @@ m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m); print(len(m
 | `compare_rpc_params.py` | RPC parameter comparison |
 | `compare_with_csharp.py` | Diff against the C# parser |
 | `check_effect_decoder.py` | Effect decoder (12 cases) |
-| `check_ascii.py` | Rust source ASCII sweep (120 files) |
+| `check_ascii.py` | Rust source ASCII sweep (121 files) |
 | `check_docs.py` | This document itself (below) |
 | `atomic_io.py` | Internal containment, recursive-removal and atomic-replacement helpers shared by mutating tools |
 
@@ -612,8 +615,11 @@ its own measurements -- `events_written`, `events_time_ms_regressions`,
 `field_rows_read`, the movement/net_guid/Event row counts read back against the
 ones the export declared, and the conversion `losses` tally.
 `server_timeline_rows_read` and `server_timeline_events_written` make the Event
-path independently recountable. `bundle_schema_version`
-names the shape; valplay's resume marker records it and rebuilds when it moves.
+path independently recountable. `field_rows_unresolved_class_net_cache` and
+`field_rows_unparsed_rep_layout_tail` independently recount the two reserved
+preservation-row shapes that were filtered before grouping.
+`bundle_schema_version` names the shape; valplay's resume marker records it and
+rebuilds when it moves.
 
 `players` is deliberately **not** forwarded: valplay derives the same table
 from the same `BombPlayerState` rows and its version keeps a *set* of character
@@ -723,12 +729,12 @@ field meaning; the analyzer deliberately performs no type inference.
 ### Quick sweep -- after any change
 
 ```bash
-cargo +1.86.0 test --workspace --locked                              # 603 passing
+cargo +1.86.0 test --workspace --locked                              # 608 passing
 cargo +1.86.0 clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo +1.86.0 fmt --check
-python -W error tools/check_ascii.py --check                         # 120 files
+python -W error tools/check_ascii.py --check                         # 121 files
 python -W error tools/check_effect_decoder.py --check                # 12 cases
-python -W error -m unittest discover -s tools/tests -p "test_*.py"   # 555 passing
+python -W error -m unittest discover -s tools/tests -p "test_*.py"   # 556 passing
 python -W error tools/check_docs.py --fast
 python -W error tools/apply_type_corrections.py --check              # 133 corrections
 python -W error tools/extract_checksum_types.py --export tools/fixtures/checksum_export --check
@@ -822,6 +828,7 @@ silent change must be impossible.
 | 13.02 | Preserved replay + 204-replay portion of the current sweep |
 | china-13.02 | 2 replays (Lotus, Sunset) + an independent Python oracle |
 | 13.04 | Upstream golden vectors + 108-replay export/checkpoint sweep |
+| china-13.04 | One preserved replay + independent Python oracle + full export/checkpoint and semantic cross-check |
 
 The current machine-local multi-build sweep (2026-08-31) reports:
 
@@ -848,6 +855,34 @@ of it in `037bf6f5`, on `AbilitiesAndBuffsComponent`, `MapTargetingState`,
 failure count, so they land outside the metric rather than inside it. What the
 100% does say is the narrower thing it is for: framing and the payload transform
 are correct on every block.
+
+china-13.04 measurement uses the preserved 21,190,421-byte replay `4bf66d93`
+(SHA-256 `661f1e4689c06c992915cb87236eb822329d0d62b5b55bc0992eb84a499fc1d9`).
+The first command dispatched from the replay's own branch; no forced transform
+was supplied:
+
+```bash
+vrfkit validate 4bf66d93.vrf
+vrfkit export 4bf66d93.vrf --out c1304-export --checkpoints
+```
+
+The direct verdict was 285,488 / 285,488 ReplayData blocks at 100.000000%, with
+zero malformed packets, framing failures, transform failures, lost RPC
+payloads or unread ReplayData bytes. ReplayData preserved 90 RepLayout tails
+(113,956 bits) and 1,753 unresolved RPC payloads; checkpoints preserved another
+18 tails (6,450 bits). Every tail row was audited with
+`len(raw_bits) == ceil(bit_count/8)` and zero padding above `bit_count`.
+
+The value cross-check uses two independently encoded sources. Filter
+`events.parquet` to `group = characterDeath`, map `word0`/`word1` character
+NetGUIDs through `manifest.players`, and exclude `word0 == word1` from credited
+kills. Then take the latest typed `AggregateKills`, `AggregateDeaths` and
+`AggregateAssists` per PlayerState from `BasicCombatStatsComponent`. All ten
+players matched exactly: 53 credited kills and 54 deaths, with one self-kill;
+the first-round five-kill sequence ended at 122,503 ms. Taking the latest typed
+member per `RoundResults[index]` independently produced round numbers 0..6,
+one switch before round 4, and a final 5-2 score. Overlay, struct, array and
+checkpoint decode errors were all zero.
 
 Adding a new build takes one `SeededTransform` impl -- two constants and three
 word functions. See the README's

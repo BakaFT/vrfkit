@@ -78,6 +78,7 @@ COUNTERS = {
     "export_groups": r"Export groups:\s+(\d+)",
     "content_blocks": r"Content blocks:\s+(\d+)",
     "rep_layout_blocks": r"RepLayout blocks:\s+(\d+)",
+    "rep_layout_tails_preserved": r"RepLayout tail:\s+(\d+) preserved raw",
     "class_net_cache_blocks": r"ClassNetCache:\s+(\d+)",
     "fields": r"Fields:\s+(\d+)",
     "rpcs": r"RPCs:\s+(\d+)",
@@ -126,6 +127,8 @@ CHECKPOINT_COUNTERS = {
     "cp_frames": r"Frames:\s+(\d+)",
     "cp_frame_packets": r"Frame packets:\s+(\d+)",
     "cp_field_rows": r"Checkpoint rows:\s+(\d+)",
+    "cp_rep_layout_tails_preserved":
+        r"Checkpoint raw:\s+(\d+) RepLayout tails",
     # Deliberately a different label from the main block's "Struct blobs", so
     # these regexes cannot match each other's line.
     "cp_struct_blobs_decoded": r"Checkpoint blobs:\s+(\d+) decoded",

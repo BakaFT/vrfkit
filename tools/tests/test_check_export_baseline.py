@@ -12,6 +12,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -35,6 +36,19 @@ def measurement(**overrides):
 class UnpinnableTests(unittest.TestCase):
     def test_a_complete_summary_can_be_pinned(self):
         self.assertEqual(guard.unpinnable(measurement()), [])
+
+        replay = guard.PATTERNS["rep_layout_tails_preserved"].search(
+            "  RepLayout tail:  17 preserved raw"
+        )
+        self.assertIsNotNone(replay)
+        self.assertEqual(replay.group(1), "17")
+
+        checkpoint = re.search(
+            guard.CHECKPOINT_COUNTERS["cp_rep_layout_tails_preserved"],
+            "  Checkpoint raw:   3 RepLayout tails / 0 unresolved RPC payloads preserved",
+        )
+        self.assertIsNotNone(checkpoint)
+        self.assertEqual(checkpoint.group(1), "3")
 
     def test_a_counter_the_summary_did_not_print_cannot_be_pinned(self):
         reasons = guard.unpinnable(measurement(struct_blobs_decoded=None))

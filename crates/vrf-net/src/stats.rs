@@ -126,6 +126,13 @@ pub struct NetStats {
     /// the field streams inside unreadable, and counting only framing failures
     /// would report a perfect pass rate for it.
     pub field_stream_failures: u64,
+    /// RepLayout stream failures whose exact unparsed suffix was handed to the
+    /// sink for raw preservation.
+    ///
+    /// This is an inclusive subset of [`Self::field_stream_failures`]. The
+    /// fields before the terminator were emitted normally; only the unexplained
+    /// tail is represented by the preservation row.
+    pub rep_layout_tails_preserved: u64,
     /// Content blocks whose decoded ClassNetCache (RPC) stream failed to parse.
     pub rpc_stream_failures: u64,
     /// RPC stream failures whose complete decoded payload was handed to the
@@ -223,6 +230,7 @@ impl NetStats {
         self.malformed_content_blocks += other.malformed_content_blocks;
         self.transform_failures += other.transform_failures;
         self.field_stream_failures += other.field_stream_failures;
+        self.rep_layout_tails_preserved += other.rep_layout_tails_preserved;
         self.rpc_stream_failures += other.rpc_stream_failures;
         self.unresolved_rpc_payloads_preserved += other.unresolved_rpc_payloads_preserved;
         self.actor_opens += other.actor_opens;
@@ -253,6 +261,12 @@ impl NetStats {
     /// "did anything get lost", and it is deliberately NOT the same thing as
     /// the oracle's pass rate.
     ///
+    /// A preserved RepLayout suffix is netted the same way. The walkable
+    /// prefix has already reached ordinary field rows, and the exact suffix is
+    /// exported under `UNPARSED_REP_LAYOUT_TAIL_FIELD_NAME`; counting that
+    /// block as lost would make preservation indistinguishable from dropping
+    /// it. Both failure counters remain visible beside their preserved subsets.
+    ///
     /// `rpc_stream_failures` is netted against
     /// `unresolved_rpc_payloads_preserved` because an unresolved
     /// ClassNetCache block is not a loss: its whole payload is exported as one
@@ -272,13 +286,16 @@ impl NetStats {
     /// published tables are missing replicated state, so any coverage claim
     /// derived by recounting them is an undercount of unknown size.
     pub fn lost_content_blocks(&self) -> u64 {
+        let field_payloads_lost = self
+            .field_stream_failures
+            .saturating_sub(self.rep_layout_tails_preserved);
         let rpc_payloads_lost = self
             .rpc_stream_failures
             .saturating_sub(self.unresolved_rpc_payloads_preserved);
         self.content_block_framing_failures
             + self.malformed_content_blocks
             + self.transform_failures
-            + self.field_stream_failures
+            + field_payloads_lost
             + rpc_payloads_lost
     }
 
@@ -495,6 +512,30 @@ mod loss_tests {
         );
     }
 
+    #[test]
+    fn preserved_rep_layout_tails_are_not_lost_blocks() {
+        let all_preserved = NetStats {
+            field_stream_failures: 3,
+            rep_layout_tails_preserved: 3,
+            ..NetStats::default()
+        };
+        assert_eq!(all_preserved.lost_content_blocks(), 0);
+
+        let partly_preserved = NetStats {
+            field_stream_failures: 3,
+            rep_layout_tails_preserved: 2,
+            ..NetStats::default()
+        };
+        assert_eq!(partly_preserved.lost_content_blocks(), 1);
+
+        let more_preserved = NetStats {
+            field_stream_failures: 1,
+            rep_layout_tails_preserved: 5,
+            ..NetStats::default()
+        };
+        assert_eq!(more_preserved.lost_content_blocks(), 0);
+    }
+
     /// The counters are incremented on different paths. More preserved than
     /// failed must read as zero loss, never as a wrapped u64.
     #[test]
@@ -616,6 +657,7 @@ mod tests {
             malformed_content_blocks: 17,
             transform_failures: 18,
             field_stream_failures: 19,
+            rep_layout_tails_preserved: 35,
             rpc_stream_failures: 20,
             unresolved_rpc_payloads_preserved: 21,
             actor_opens: 22,
@@ -656,6 +698,7 @@ mod tests {
         assert_eq!(totals.malformed_content_blocks, 34);
         assert_eq!(totals.transform_failures, 36);
         assert_eq!(totals.field_stream_failures, 38);
+        assert_eq!(totals.rep_layout_tails_preserved, 70);
         assert_eq!(totals.rpc_stream_failures, 40);
         assert_eq!(totals.unresolved_rpc_payloads_preserved, 42);
         assert_eq!(totals.actor_opens, 44);
