@@ -30,6 +30,11 @@ use super::{ExportSink, FieldValues, TABLE};
 /// The RPC whose payload is a movement batch rather than a parameter list.
 const MOVEMENT_RPC: &str = "ReplaysClientReceiveRemoteCharacterUpdatesSingleArrayNoAutonomous";
 
+/// Active gameplay effects do not follow the FunctionParameters payload grammar.
+const ACTIVE_GAMEPLAY_EFFECTS_GROUP: &str =
+    "/Script/ShooterGame.AresAbilitySystemComponent_ClassNetCache";
+const ACTIVE_GAMEPLAY_EFFECTS_RPC: &str = "ActiveGameplayEffects";
+
 impl ExportSink<'_> {
     /// Resolve a field or function name from the current block's group.
     ///
@@ -161,6 +166,24 @@ impl FieldSink for ExportSink<'_> {
                 raw_bits: failed
                     .then(|| copy_raw_bits(fallback_reader, bit_count))
                     .flatten(),
+                ..FieldValues::default()
+            });
+        } else if bit_count > 0
+            && self.current_group_path.as_ref() == ACTIVE_GAMEPLAY_EFFECTS_GROUP
+            && field_name.as_deref() == Some(ACTIVE_GAMEPLAY_EFFECTS_RPC)
+        {
+            // This named payload does not follow the RepLayout
+            // FunctionParameters grammar used by ordinary RPCs. In 24 measured
+            // calls across two China 13.02 replays and one China 13.05 replay,
+            // trying that grammar emitted a plausible zero-bit `_h0` before
+            // abandoning the real payload as a suffix. Keep exactly one whole
+            // raw row until a dedicated decoder exists; no fabricated
+            // parameter should escape.
+            self.push_field(FieldValues {
+                handle,
+                field_name,
+                bit_count,
+                raw_bits: copy_raw_bits(reader, bit_count),
                 ..FieldValues::default()
             });
         } else if bit_count > 0 {
@@ -891,6 +914,41 @@ mod tests {
         write_int_packed(&mut bits, 0); // terminator handle
         bits.extend(std::iter::repeat_n(true, suffix_bits));
         bits
+    }
+
+    #[test]
+    fn active_gameplay_effects_stays_one_opaque_raw_rpc() {
+        let bits = rpc_payload_with_suffix(16);
+        let data = bits_to_bytes(&bits);
+        let path = ACTIVE_GAMEPLAY_EFFECTS_GROUP;
+        let mut cache = NetGuidCache::new();
+        cache
+            .add_export_group(vrf_schema::NetFieldExportGroup::new(path.into(), 7, 2))
+            .unwrap();
+        assert!(cache.set_field_on_group(
+            7,
+            vrf_schema::NetFieldExport {
+                handle: 1,
+                compatible_checksum: 0,
+                name: ACTIVE_GAMEPLAY_EFFECTS_RPC.into(),
+            },
+        ));
+        let mut channel_state = ChannelState::new();
+        let mut records = RecordBuffers::default();
+        let mut sink = ExportSink::new(&mut cache, &mut channel_state, &mut records);
+        sink.set_current_group_path(Arc::from(path));
+        let reader = BitReader::with_bit_len(&data, bits.len() as u64).unwrap();
+
+        sink.on_rpc(1, bits.len() as u32, reader);
+
+        assert_eq!(sink.stats.rpc_suffix_bits_dropped, 0);
+        assert_eq!(sink.stats.truncated_rpcs, 0);
+        drop(sink);
+        assert_eq!(records.fields.len(), 1);
+        let row = &records.fields[0];
+        assert_eq!(row.field_name.as_deref(), Some(ACTIVE_GAMEPLAY_EFFECTS_RPC));
+        assert_eq!(row.bit_count, bits.len() as u32);
+        assert_eq!(row.raw_bits.as_deref(), Some(data.as_slice()));
     }
 
     /// Bits left over after the zero-handle terminator must be counted.

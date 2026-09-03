@@ -4,7 +4,7 @@ Every global build's golden vectors are lifted from the upstream C# fixture,
 which is an implementation written by someone else and therefore an independent
 check on our port. The regional builds need a separate oracle: China 13.02's
 fixture rows came from an implementation with zeroing 32-bit and byte lanes,
-and China 13.04 is absent from the fixture entirely.
+and China 13.04/13.05 are absent from the fixture entirely.
 
 This module supplies those second implementations. It is written against the
 measured algorithm descriptions rather than transliterated from the Rust, so it
@@ -17,9 +17,14 @@ China 13.02 uses them, and they are shared with global builds whose vectors come
 from the C# fixture, so a corrupt table is independently detectable.
 
 Usage:
-    from china_transform_oracle import ChinaTransform, China1304Transform
+    from china_transform_oracle import (
+        ChinaTransform,
+        China1304Transform,
+        China1305Transform,
+    )
     ChinaTransform(sbox_path).transform(payload_bytes, bit_count, seed)
     China1304Transform(sbox_path).transform(payload_bytes, bit_count, seed)
+    China1305Transform(sbox_path).transform(payload_bytes, bit_count, seed)
 """
 
 from __future__ import annotations
@@ -29,6 +34,7 @@ from pathlib import Path
 
 BRANCH = "++Ares-Core+release-china-13.02"
 CHINA_1304_BRANCH = "++Ares-Core+release-china-13.04"
+CHINA_1305_BRANCH = "++Ares-Core+release-china-13.05"
 
 MASK8 = 0xFF
 MASK32 = 0xFFFF_FFFF
@@ -248,7 +254,7 @@ class China1304Transform(ChinaTransform):
 
     def byte(self, value: int, state: int) -> int:
         mixes = {
-            exponent: (state * (11 ** exponent)) & MASK32
+            exponent: (state * (11**exponent)) & MASK32
             for exponent in (1, 2, 3, 4, 6)
         }
         value = reverse_bits(value, 8)
@@ -257,3 +263,40 @@ class China1304Transform(ChinaTransform):
         value = (value + mixes[3]) & MASK8
         value = (value + mixes[2]) & MASK8
         return value ^ (~mixes[1] & MASK8)
+
+
+class China1305Transform(ChinaTransform):
+    """The replay-recovered `release-china-13.05` transform."""
+
+    SEED_ADDEND = 0xF677_61C9
+    INIT_A_OFFSET = 0x37
+    TAIL_XOR = 0xC9
+
+    def word64(self, value: int, state: int) -> int:
+        value = (value + rotr(state, 8, 32, MASK32)) & MASK64
+        left = (rotr(state, 4, 32, MASK32) % 63) + 1
+        left += (rotr(state, 6, 32, MASK32) % 63) + 1
+        right = (rotr(state, 2, 32, MASK32) % 63) + 1
+        right += (rotr(state, 7, 32, MASK32) % 63) + 1
+        value = rotl(value, left - right, 64, MASK64)
+        return (value - rotr(state, 1, 32, MASK32)) & MASK64
+
+    def word32(self, value: int, state: int) -> int:
+        value = (value + rotl(state, 8, 32, MASK32)) & MASK32
+        left = (rotl(state, 4, 32, MASK32) % 31) + 1
+        left += (rotl(state, 6, 32, MASK32) % 31) + 1
+        right = (rotl(state, 2, 32, MASK32) % 31) + 1
+        right += (rotl(state, 7, 32, MASK32) % 31) + 1
+        value = rotl(value, left - right, 32, MASK32)
+        return (value - rotl(state, 1, 32, MASK32)) & MASK32
+
+    def byte(self, value: int, state: int) -> int:
+        mixes = {
+            exponent: (state * (11**exponent)) & MASK32
+            for exponent in (1, 2, 4, 6, 7, 8)
+        }
+        value = (value + mixes[8]) & MASK8
+        left = (mixes[4] % 7) + 1 + (mixes[6] % 7) + 1
+        right = (mixes[2] % 7) + 1 + (mixes[7] % 7) + 1
+        value = rotl(value, left - right, 8, MASK8)
+        return (value - mixes[1]) & MASK8

@@ -2,8 +2,8 @@
 """Reproduce the replay-driven recovery steps for a China release transform.
 
 The evidence file contains only deterministic wire observations: seeds,
-plaintext/ciphertext pairs, state candidates and low-byte constraints. The
-default run verifies the committed observations quickly. Pass
+plaintext/ciphertext pairs, state candidates and successor-state constraints.
+The default run verifies the committed observations quickly. Pass
 `--rescan-mixed-a` to repeat the full u32 intermediate-state scan with NumPy.
 """
 
@@ -188,6 +188,14 @@ def sequence_names(sequence: tuple[int, ...]) -> tuple[str, ...]:
     return tuple(operation_name(operation) for operation in sequence)
 
 
+def sequence_operations(names: list[str]) -> tuple[int, ...]:
+    by_name = {operation_name(operation): operation for operation in range(OPERATION_COUNT)}
+    try:
+        return tuple(by_name[name] for name in names)
+    except KeyError as error:
+        raise RecoveryError(f"unknown operation name {error.args[0]!r}") from error
+
+
 def evaluate_sequence(
     value: int, state: int, sequence: tuple[int, ...], sbox: tuple[int, ...]
 ) -> int:
@@ -201,16 +209,22 @@ def vector(row: dict) -> tuple[int, int, int]:
 
 
 def search_word64_representatives(
-    row: dict, length: int, sbox: tuple[int, ...]
+    rows: list[dict] | dict, length: int, sbox: tuple[int, ...]
 ) -> list[tuple[int, ...]]:
-    """Return one representative for each meet-in-the-middle state.
+    """Return one representative for each joint meet-in-the-middle state.
 
-    Algebraically equivalent prefixes can converge on the same intermediate
-    value. Keeping the first one matches the calibrated investigation tool and
-    keeps memory bounded; this is a recovery search, not a proof that every
-    possible spelling has been enumerated.
+    The key contains every evidence vector, not only the first. Two prefixes
+    can coincide for one state while differing for another; retaining only the
+    first-state representative discarded the China 13.05 sequence even though
+    it satisfied all four measured words. A joint signature only merges paths
+    that agree at every observed state.
     """
-    cipher, plain, state = vector(row)
+    if isinstance(rows, dict):
+        rows = [rows]
+    parsed = tuple(map(vector, rows))
+    if not parsed:
+        raise RecoveryError("word64 search requires at least one evidence vector")
+
     inverse = [0] * 256
     for source, target in enumerate(sbox):
         inverse[target] = source
@@ -218,45 +232,38 @@ def search_word64_representatives(
 
     left_depth = length // 2
     right_depth = length - left_depth
-    forward: dict[int, tuple[int, ...]] = {}
+    forward: dict[tuple[int, ...], tuple[int, ...]] = {}
     for sequence in itertools.product(range(OPERATION_COUNT), repeat=left_depth):
-        value = evaluate_sequence(cipher, state, sequence, sbox)
-        forward.setdefault(value, sequence)
+        signature = tuple(
+            evaluate_sequence(cipher, state, sequence, sbox)
+            for cipher, _plain, state in parsed
+        )
+        forward.setdefault(signature, sequence)
 
     matches: set[tuple[int, ...]] = set()
     for reverse_sequence in itertools.product(
         range(OPERATION_COUNT), repeat=right_depth
     ):
-        value = plain
-        for operation in reverse_sequence:
-            value = apply_inverse(value, state, operation, sbox, inverse_sbox)
-        prefix = forward.get(value)
+        signature = []
+        for _cipher, plain, state in parsed:
+            value = plain
+            for operation in reverse_sequence:
+                value = apply_inverse(value, state, operation, sbox, inverse_sbox)
+            signature.append(value)
+        prefix = forward.get(tuple(signature))
         if prefix is not None:
             matches.add(prefix + tuple(reversed(reverse_sequence)))
     return sorted(matches)
 
 
-def filter_vectors(
-    candidates: list[tuple[int, ...]], rows: list[dict], sbox: tuple[int, ...]
-) -> list[tuple[int, ...]]:
-    return [
-        candidate
-        for candidate in candidates
-        if all(
-            evaluate_sequence(cipher, state, candidate, sbox) == plain
-            for cipher, plain, state in map(vector, rows)
-        )
-    ]
-
-
-def recover_word64(evidence: dict) -> tuple[str, ...]:
+def recover_word64(evidence: dict) -> tuple[int, ...]:
     config = evidence["word64"]
     sbox = load_sbox(REPO / config["sbox_path"])
 
     calibration = config["calibration"]
     calibration_length = len(calibration["expected_sequence"])
     calibration_matches = search_word64_representatives(
-        calibration, calibration_length, sbox
+        [calibration], calibration_length, sbox
     )
     calibration_names = {sequence_names(match) for match in calibration_matches}
     expected_calibration = tuple(calibration["expected_sequence"])
@@ -271,8 +278,7 @@ def recover_word64(evidence: dict) -> tuple[str, ...]:
     matches: list[tuple[int, ...]] = []
     shortest = 0
     for length in range(1, int(config["max_sequence_length"]) + 1):
-        candidates = search_word64_representatives(rows[0], length, sbox)
-        matches = filter_vectors(candidates, rows[1:], sbox)
+        matches = search_word64_representatives(rows, length, sbox)
         print(f"word64 target: length={length} representatives={len(matches)}")
         if matches:
             shortest = length
@@ -281,71 +287,135 @@ def recover_word64(evidence: dict) -> tuple[str, ...]:
         raise RecoveryError("no word64 sequence satisfies every evidence vector")
 
     expected = tuple(config["expected_sequence"])
-    names = {sequence_names(match) for match in matches}
-    if expected not in names:
+    selected = next(
+        (match for match in matches if sequence_names(match) == expected),
+        None,
+    )
+    if selected is None:
         raise RecoveryError("the expected word64 sequence was not recovered")
     print(f"word64 recovered at shortest length {shortest}: {' -> '.join(expected)}")
-    return expected
+    return selected
 
 
-def decode_word32(cipher: int, state: int, first_not: bool, last_not: bool) -> int:
-    value = reverse_bits(cipher, 32)
-    first = rotl(state, 6, 32, MASK32)
-    value ^= ((~first) & MASK32) if first_not else first
-    for exponent in (4, 3, 2):
-        value = (value + rotl(state, exponent, 32, MASK32)) & MASK32
-    last = rotl(state, 1, 32, MASK32)
-    value ^= ((~last) & MASK32) if last_not else last
+def short_state_operand(state: int, operation: int, width: int) -> int:
+    exponent = (operation - 4) % 8 + 1
+    if width == 32:
+        return rotl(state, exponent, 32, MASK32)
+    if width == 8:
+        return (state * (11**exponent)) & MASK32
+    raise RecoveryError(f"unsupported short-lane width {width}")
+
+
+def substitute(value: int, width: int, table: tuple[int, ...]) -> int:
+    output = 0
+    for index in range(width // 8):
+        output |= table[(value >> (index * 8)) & MASK8] << (index * 8)
+    return output
+
+
+def evaluate_short_sequence(
+    value: int,
+    state: int,
+    sequence: tuple[int, ...],
+    width: int,
+    sbox: tuple[int, ...],
+    complement_toggles: tuple[bool, ...],
+) -> int:
+    mask = (1 << width) - 1
+    xor_index = 0
+    for operation in sequence:
+        operand = short_state_operand(state, operation, width) if operation >= 4 else 0
+        projected = operand & mask
+        if operation == 0:
+            value = (~value) & mask
+        elif operation == 1:
+            value = swap_adjacent(value, mask)
+        elif operation == 2:
+            value = reverse_bits(value, width)
+        elif operation == 3:
+            value = substitute(value, width, sbox)
+        elif 4 <= operation <= 11:
+            value = rotl(value, (operand % (width - 1)) + 1, width, mask)
+        elif 12 <= operation <= 19:
+            value = rotr(value, (operand % (width - 1)) + 1, width, mask)
+        elif 20 <= operation <= 27:
+            value = (value + projected) & mask
+        elif 28 <= operation <= 35:
+            value = (value - projected) & mask
+        elif 36 <= operation <= 51:
+            complemented = operation >= 44
+            if complement_toggles[xor_index]:
+                complemented = not complemented
+            xor_index += 1
+            value ^= ((~projected) & mask) if complemented else projected
+        else:
+            raise RecoveryError(f"unknown operation {operation}")
     return value
 
 
-def decode_byte(cipher: int, state: int, first_not: bool, last_not: bool) -> int:
-    value = reverse_bits(cipher, 8)
-    mixes = {
-        exponent: (state * (11**exponent)) & MASK32
-        for exponent in (1, 2, 3, 4, 6)
-    }
-    first = mixes[6] & MASK8
-    value ^= ((~first) & MASK8) if first_not else first
-    for exponent in (4, 3, 2):
-        value = (value + (mixes[exponent] & MASK8)) & MASK8
-    last = mixes[1] & MASK8
-    value ^= ((~last) & MASK8) if last_not else last
-    return value
+def expected_short_toggles(config: dict, xor_count: int) -> tuple[bool, ...]:
+    if "expected_xor_complement_toggles" in config:
+        toggles = tuple(config["expected_xor_complement_toggles"])
+    else:
+        legacy = config["expected_complements"]
+        toggles = (legacy["first_xor"], legacy["last_xor"])
+    if len(toggles) != xor_count or not all(isinstance(value, bool) for value in toggles):
+        raise RecoveryError(
+            f"expected {xor_count} short-lane XOR toggle(s), got {toggles}"
+        )
+    return toggles
 
 
-def recover_short_lanes(evidence: dict) -> tuple[bool, bool]:
+def recover_short_lanes(
+    evidence: dict, sequence: tuple[int, ...] | None = None
+) -> tuple[bool, ...]:
     config = evidence["short_lanes"]
+    if sequence is None:
+        sequence = sequence_operations(evidence["word64"]["expected_sequence"])
+    xor_count = sum(operation >= 36 for operation in sequence)
+    sbox_path = REPO / evidence["word64"]["sbox_path"]
+    sbox32 = load_sbox(sbox_path, "SBOX_32")
+    sbox8 = load_sbox(sbox_path, "SBOX_8")
+
     passing = []
-    for first_not, last_not in itertools.product((False, True), repeat=2):
+    for toggles in itertools.product((False, True), repeat=xor_count):
         word32_ok = all(
-            decode_word32(
-                le_word(row["cipher_le"]), row["state"], first_not, last_not
+            evaluate_short_sequence(
+                le_word(row["cipher_le"]),
+                parse_int(row["state"]),
+                sequence,
+                32,
+                sbox32,
+                toggles,
             )
             == le_word(row["plain_le"])
             for row in config["word32"]
         )
         byte_ok = all(
-            decode_byte(
-                parse_int(row["cipher"]), row["state"], first_not, last_not
+            evaluate_short_sequence(
+                parse_int(row["cipher"]),
+                parse_int(row["state"]),
+                sequence,
+                8,
+                sbox8,
+                toggles,
             )
             == parse_int(row["plain"])
             for row in config["byte"]
         )
         if word32_ok and byte_ok:
-            passing.append((first_not, last_not))
+            passing.append(toggles)
 
-    expected = config["expected_complements"]
-    expected_pair = (expected["first_xor"], expected["last_xor"])
-    if passing != [expected_pair]:
+    expected = expected_short_toggles(config, xor_count)
+    if passing != [expected]:
         raise RecoveryError(
-            f"short-lane complement search returned {passing}, expected {expected_pair}"
+            f"short-lane complement search returned {passing}, expected {expected}"
         )
     print(
-        "short lanes: unique complement pair first_xor=true last_xor=true "
+        f"short lanes: unique XOR complement toggles {list(expected)} "
         f"({len(config['word32'])} word32 and {len(config['byte'])} byte vectors)"
     )
-    return expected_pair
+    return expected
 
 
 def g(value: int) -> int:
@@ -427,13 +497,23 @@ def scan_mixed_a(
 
 
 def derive_prng_candidates(
-    config: dict, mixed_values: dict[int, list[int]]
+    config: dict,
+    mixed_values: dict[int, list[int]],
+    sequence: tuple[int, ...],
+    short_toggles: tuple[bool, ...],
+    sbox32: tuple[int, ...],
+    sbox8: tuple[int, ...],
 ) -> list[dict[str, int | str]]:
     anchor_seed = parse_int(config["seed"])
     low_pairs = [
         (parse_int(row["seed"]), parse_int(row["value"]))
-        for row in config["state1_low_bytes"]
+        for row in config.get("state1_low_bytes", [])
     ]
+    word32_rows = config.get("state1_word32", [])
+    byte_rows = config.get("state1_byte", [])
+    if not (low_pairs or word32_rows or byte_rows):
+        raise RecoveryError("PRNG evidence has no later-state constraints")
+
     identities: dict[int, list[str]] = {}
     for candidate in config["state_candidates"]:
         identities.setdefault(parse_int(candidate["state"]), []).append(
@@ -451,11 +531,43 @@ def derive_prng_candidates(
                 q_at_anchor = high7 ^ (mixed_a >> 25)
                 if state1(anchor_seed, addend, q_at_anchor, anchor_seed) != target_state:
                     raise RecoveryError("derived PRNG candidate failed to round-trip")
+
+                def next_state(seed: int | str) -> int:
+                    return state1(
+                        parse_int(seed), addend, q_at_anchor, anchor_seed
+                    )
+
                 if not all(
-                    (state1(seed, addend, q_at_anchor, anchor_seed) & MASK8) == low
-                    for seed, low in low_pairs
+                    (next_state(seed) & MASK8) == low for seed, low in low_pairs
                 ):
                     continue
+                if not all(
+                    evaluate_short_sequence(
+                        le_word(row["cipher_le"]),
+                        next_state(row["seed"]),
+                        sequence,
+                        32,
+                        sbox32,
+                        short_toggles,
+                    )
+                    == le_word(row["plain_le"])
+                    for row in word32_rows
+                ):
+                    continue
+                if not all(
+                    evaluate_short_sequence(
+                        parse_int(row["cipher"]),
+                        next_state(row["seed"]),
+                        sequence,
+                        8,
+                        sbox8,
+                        short_toggles,
+                    )
+                    == parse_int(row["plain"])
+                    for row in byte_rows
+                ):
+                    continue
+
                 subtract_offset = (anchor_seed - q_at_anchor) & 0x7F
                 key = (target_state, addend, q_at_anchor, subtract_offset)
                 if key in seen:
@@ -477,9 +589,26 @@ def derive_prng_candidates(
 
 
 def recover_prng(
-    evidence: dict, *, rescan: bool = False, scan_bits: int = 32, chunk_bits: int = 22
+    evidence: dict,
+    sequence: tuple[int, ...] | None = None,
+    short_toggles: tuple[bool, ...] | None = None,
+    *,
+    rescan: bool = False,
+    scan_bits: int = 32,
+    chunk_bits: int = 22,
 ) -> dict[str, int | str]:
     config = evidence["prng"]
+    if sequence is None:
+        sequence = sequence_operations(evidence["word64"]["expected_sequence"])
+    if short_toggles is None:
+        short_toggles = expected_short_toggles(
+            evidence["short_lanes"],
+            sum(operation >= 36 for operation in sequence),
+        )
+    sbox_path = REPO / evidence["word64"]["sbox_path"]
+    sbox32 = load_sbox(sbox_path, "SBOX_32")
+    sbox8 = load_sbox(sbox_path, "SBOX_8")
+
     committed = recorded_mixed_a(config)
     if rescan:
         mixed_values = scan_mixed_a(config, bits=scan_bits, chunk_bits=chunk_bits)
@@ -494,7 +623,14 @@ def recover_prng(
         f"mixed_a inverses: {inverse_count} across "
         f"{len(mixed_values)} target state(s)"
     )
-    candidates = derive_prng_candidates(config, mixed_values)
+    candidates = derive_prng_candidates(
+        config,
+        mixed_values,
+        sequence,
+        short_toggles,
+        sbox32,
+        sbox8,
+    )
     if len(candidates) != 1:
         raise RecoveryError(f"PRNG derivation produced {len(candidates)} candidates")
     candidate = candidates[0]
@@ -507,6 +643,8 @@ def recover_prng(
         "equivalent_add_offset": parse_int(expected["equivalent_add_offset"]),
         "tail_xor": parse_int(expected["tail_xor"]),
     }
+    if "q_at_anchor" in expected:
+        expected_values["q_at_anchor"] = parse_int(expected["q_at_anchor"])
     for key, value in expected_values.items():
         if candidate[key] != value:
             raise RecoveryError(
@@ -574,13 +712,17 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         evidence = load_evidence(args.evidence)
+        sequence = None
+        short_toggles = None
         if args.phase in ("all", "word64"):
-            recover_word64(evidence)
+            sequence = recover_word64(evidence)
         if args.phase in ("all", "short-lanes"):
-            recover_short_lanes(evidence)
+            short_toggles = recover_short_lanes(evidence, sequence)
         if args.phase in ("all", "prng"):
             recover_prng(
                 evidence,
+                sequence,
+                short_toggles,
                 rescan=args.rescan_mixed_a,
                 scan_bits=args.scan_bits,
                 chunk_bits=args.chunk_bits,

@@ -162,7 +162,7 @@ These corrupt downstream consumers silently — no test fails when they break.
 
 ## Bringing up a new game build
 
-Riot rotates the payload transform every build. Across the eight in the tree no
+Riot rotates the payload transform every build. Across the nine in the tree no
 two `word64` implementations are alike — the operator order, the `k` values it
 rotates the state by, and whether the S-box stage runs at all have all changed
 between consecutive releases. What has *never* changed is the skeleton: the
@@ -225,7 +225,7 @@ Use a first-word prefix measurement to isolate `word64` when the constants are
 unknown; do not reject it solely because the total misses the table above.
 
 `TAIL_XOR` is not an independent constant — it is the low byte of
-`SEED_ADDEND` in all eight builds, and a test in `versions/mod.rs` enforces that.
+`SEED_ADDEND` in all nine builds, and a test in `versions/mod.rs` enforces that.
 
 ### 4. Derive the other two lanes
 
@@ -266,11 +266,13 @@ A replay validating is not enough on its own, and neither are golden vectors.
 
 For China releases, the exact known-plaintext, MITM, short-lane and PRNG
 constant procedure is specified in
-[`docs/CHINA_RELEASE_BRINGUP.md`](docs/CHINA_RELEASE_BRINGUP.md). Its committed
-13.04 fixture can be replayed quickly with:
+[`docs/CHINA_RELEASE_BRINGUP.md`](docs/CHINA_RELEASE_BRINGUP.md). Its committed 13.04 fixture is the default; pass the 13.05 evidence path to
+replay that recovery:
 
 ```bash
 python -W error tools/china_release/recover.py
+python -W error tools/china_release/recover.py \
+  tools/china_release/evidence/china_13_05.json
 ```
 
 ### 6. Register it everywhere

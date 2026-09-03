@@ -34,24 +34,26 @@ not be used to force a plausible parse.
 
 ## 2. Provenance matters
 
-The two existing China builds do not have the same provenance:
+The three existing China builds do not have the same provenance:
 
 - China 13.02's 64-bit lane and PRNG constants came from the public port of a
   third-party decompilation. This repository derived only its missing 32-bit
   and byte lanes.
-- China 13.04 had no usable external implementation. Its three word functions
-  and PRNG constants were recovered from replay measurements in this
-  repository.
+- China 13.04 and China 13.05 had no usable external implementation. Their
+  three word functions and PRNG constants were recovered independently from
+  replay measurements in this repository.
 
-See [`NOTICE.md`](../NOTICE.md#china-1304-replay-recovery) and the doc comments
-on [`V13_02China`](../crates/vrf-transform/src/versions/v13_02_china.rs) and
-[`V13_04China`](../crates/vrf-transform/src/versions/v13_04_china.rs).
+See [`NOTICE.md`](../NOTICE.md#china-1304-replay-recovery),
+[`NOTICE.md`](../NOTICE.md#china-1305-replay-recovery), and the doc comments on
+[`V13_02China`](../crates/vrf-transform/src/versions/v13_02_china.rs),
+[`V13_04China`](../crates/vrf-transform/src/versions/v13_04_china.rs), and
+[`V13_05China`](../crates/vrf-transform/src/versions/v13_05_china.rs).
 
 "Original to this repository" does not mean "derived from no prior knowledge."
-China 13.04 reused the already measured transform skeleton, historical
-primitive vocabulary, Unreal RepLayout grammar and a supported China 13.02
-replay as a known-plaintext reference. Those are constraints, not a 13.04
-answer.
+China 13.04 and 13.05 reused the already measured transform skeleton,
+historical primitive vocabulary, Unreal RepLayout grammar and supported older
+replays as known-plaintext references. Those are constraints, not the answer
+for either new branch.
 
 ## 3. Evidence hierarchy
 
@@ -74,30 +76,35 @@ from the recovered algorithm cannot, by itself, prove that algorithm correct.
 
 ## 4. Reproducible artifacts
 
-The recovery helper and the committed China 13.04 evidence are:
+The recovery helper and both replay-recovered evidence fixtures are:
 
 ```text
 tools/china_release/recover.py
 tools/china_release/evidence/china_13_04.json
+tools/china_release/evidence/china_13_05.json
 ```
 
-The evidence file contains no replay and no account identifier. It records:
+Neither evidence file contains a replay or account identifier. Both record the
+preserved replay's label, size and SHA-256; exact little-endian plaintext and
+ciphertext observations with their state/seed; a historical China 13.02
+calibration; full-scan intermediates; and the expected final constants.
+China 13.04 additionally records two target word64 states, fourteen short-lane
+observations, Ace-derived PlayerState candidates and seven `state1` low bytes.
+China 13.05 records four target word64 states, fourteen short-lane observations,
+three TimedBomb-derived full-state candidates, and five independent word32 plus
+seven byte constraints on the successor state.
 
-- the preserved replay's label, size and SHA-256;
-- exact little-endian plaintext/ciphertext word pairs;
-- the state/seed attached to each pair;
-- seven 32-bit and seven byte-lane observations;
-- candidate first PRNG states from the Ace payload;
-- seven independently observed `state1` low bytes;
-- the complete `mixed_a` scan result and expected final constants.
-
-Run the fast, committed-evidence reproduction from the repository root:
+Run the fast, committed-evidence reproductions from the repository root. The
+13.04 fixture remains the default for compatibility:
 
 ```bash
 python -W error tools/china_release/recover.py
+python -W error tools/china_release/recover.py \
+  tools/china_release/evidence/china_13_05.json
 ```
 
-Run phases separately while investigating:
+Run phases separately while investigating; insert an evidence path after the
+script name to select 13.05:
 
 ```bash
 python -W error tools/china_release/recover.py --phase word64
@@ -105,22 +112,26 @@ python -W error tools/china_release/recover.py --phase short-lanes
 python -W error tools/china_release/recover.py --phase prng
 ```
 
-The default PRNG phase uses the committed result of the full `u32` scan. To
-repeat that scan rather than trust the recorded intermediates:
+The PRNG phase normally verifies the committed result of the full `u32` scan.
+To repeat the China 13.05 scan rather than trust those intermediates:
 
 ```bash
 python -W error tools/china_release/recover.py \
+  tools/china_release/evidence/china_13_05.json \
   --phase prng --rescan-mixed-a --scan-bits 32
 ```
 
 The rescan uses NumPy from `requirements.txt`, scans in bounded chunks and
 prints progress. `--scan-bits N` exists only for tool development. A result
-from less than 32 bits is not evidence for a release transform.
+from less than 32 bits is not evidence for a release transform. The final
+13.05 acceptance run enumerated all 4,294,967,296 values, reproduced five
+inverses across three candidate states and returned the one committed constant
+family.
 
-The helper deliberately reads the repository's generated `SBOX_64` rather than
-a game executable. China 13.04 ultimately does not use an S-box, but the search
-vocabulary includes it and the China 13.02 calibration does use it. No private
-binary is needed to reproduce the committed search.
+The helper deliberately reads the repository's generated S-boxes rather than a
+game executable. China 13.04 and 13.05 ultimately do not use an S-box, but the
+search vocabulary includes it and the China 13.02 calibration does use it. No
+private binary is needed to reproduce either committed search.
 
 ## 5. Preserve the input first
 
@@ -142,7 +153,18 @@ SHA-256: 661f1e4689c06c992915cb87236eb822329d0d62b5b55bc0992eb84a499fc1d9
 branch:  ++Ares-Core+release-china-13.04
 ```
 
-Nothing in the repository resolves that label to a personal filesystem path.
+For China 13.05 the separately preserved evidence is:
+
+```text
+label:   c6a882f3
+size:    19,764,252 bytes
+SHA-256: 4a54d799e278a2bc123ac2fda558a8ee93dafc504d423f254123b1d4c9f1cdf9
+branch:  ++Ares-Core+release-china-13.05
+```
+
+Both files were copied into private scratch space before analysis; the game
+installation remained read-only. Nothing in the repository resolves either
+label to a personal filesystem path.
 
 ## 6. Establish the failure baseline
 
@@ -160,6 +182,13 @@ China 13.04 measured between 0.72% and 0.90% with all seven transforms known at
 the time. Global 13.04 scored 0.733481%; China 13.02 scored 0.904416%. That is
 random-error scale and rejects both "regional branch reuses global" and
 "regional routine did not rotate".
+
+China 13.05 was probed against all eight transforms then registered. They passed
+between 27.931071% and 32.215478% under the current consumed-or-preserved block
+metric, with global 13.04 lowest and global 12.11 highest. None approached the
+new transform's 276,631/276,631 result. Record the exact metric being compared:
+preservation-aware pass rates are not directly comparable to older strict
+framing percentages.
 
 Record rejected candidates. Repeating a failed family later wastes time and
 makes a lucky near-match look novel.
@@ -179,10 +208,10 @@ Good anchors have all of these properties:
 - at least two actor GUIDs or block lengths, producing different seeds;
 - a supported older replay carrying the same semantic object, when available.
 
-Ceremony actors met those conditions in both China 13.02 and China 13.04.
-`DefaultCeremony_C` declared handles 3, 12 and 14. A supported China 13.02
-export established their initial payloads as 3, 3 and 1 bits with values 1, 3
-and true.
+Ceremony actors met those conditions in all three China builds. Never copy a
+handle number forward without checking the target replay: China 13.05 itself
+redeclared handles 3, 12 and 14 before they were used. Supported older exports
+established their initial payloads as 3, 3 and 1 bits with values 1, 3 and true.
 
 ### 7.2 Rebuild the framing, not a byte guess
 
@@ -218,6 +247,20 @@ The second plaintext ends immediately after handle 15. Its unknown payload
 length and player value start in the next word, so they cannot contaminate this
 64-bit constraint.
 
+China 13.05 used four states instead of relying on a two-vector collision:
+
+| Anchor | State | Cipher, little endian | Plain, little endian |
+|---|---:|---|---|
+| DefaultCeremony exact 64-bit block | 528 | `16 0d a2 51 30 0f 81 00` | `10 0c a2 61 30 0f 81 00` |
+| BaseReplayPlayerState first word | 92 | `d0 30 18 c3 05 c1 80 20` | `10 0c 82 01 41 a0 61 30` |
+| AresWorldSettings first word | 2,276 | `08 20 00 9e 0f a2 61 30` | `10 0c a2 61 30 10 20 00` |
+| BaseReplayController first word | 285 | `e0 30 0f eb 03 9e 0c a4` | `10 0c a4 61 30 0f 08 04` |
+
+The three non-ceremony plaintext words repeat byte-for-byte in the same
+actor-open classes across three supported China 13.02/13.04 replays. The target
+replay supplied the ciphertext, declared bit length and actor NetGUID used to
+recompute every state.
+
 ## 8. Recover `word64`
 
 ### 8.1 Calibrate the search implementation
@@ -243,11 +286,14 @@ NOT, SWAP, REV, SBOX
 ROL(k), ROR(k), ADD(k), SUB(k), XOR(k), XORNOT(k), k=1..8
 ```
 
-It uses meet-in-the-middle: evaluate half-sequences forward from ciphertext and
-half-sequences backward from plaintext, then join on the intermediate word.
-Only representative prefixes are retained when algebraically equivalent paths
-converge; this bounds memory and is sufficient to recover a candidate. It is
-not a count of every possible textual spelling.
+It uses meet-in-the-middle: evaluate half-sequences forward from every
+ciphertext and backward from every plaintext, then join on the tuple of all
+intermediate words. The multi-state key matters. Prefixes can collide at one
+state and diverge at another; the old single-vector key discarded the actual
+China 13.05 prefix. A representative is merged only when its joint signature
+matches at every evidence state. This bounds memory without making one state a
+lossy deduplication key; it is still not a count of every possible textual
+spelling.
 
 One China 13.04 vector admitted accidental shorter spellings. Applying the
 second state removed all lengths below six and left representative forms that
@@ -260,6 +306,17 @@ REV -> XOR6 -> ADD4 -> ADD3 -> ADD2 -> XOR1
 The ADD operations commute. The apparent alternative using `XORNOT` and `SUB`
 is universally equivalent because `~x - s == ~(x + s)` and the two complemented
 XORs cancel the representation change.
+
+For China 13.05 all four states rejected every sequence shorter than six. At
+length six the joint search retained 12 representatives, all differing only in
+the order of four commuting rotations. The committed canonical spelling is:
+
+```text
+ADD8 -> ROL4 -> ROL6 -> ROR2 -> ROR7 -> SUB1
+```
+
+The ambiguity is explicit: the evidence fixes the semantic transform, not one
+unique source-code order for operations that commute on every input.
 
 ### 8.3 Broad brute force is a rejection tool
 
@@ -313,6 +370,13 @@ byte:
 The committed recovery helper reruns all four combinations. It fails unless
 exactly one passes both lane sets.
 
+China 13.05 projects the same six operations directly: `rotate_right(k)` state
+operands become `rotate_left(k)` in word32 and `state * 11^k` in byte. Seven
+independent 32-bit ceremony words and seven bytes all matched. Because this
+sequence has no XOR primitive, its complement-toggle space contains exactly the
+empty tuple; the helper still evaluates both short lanes through the same
+general 52-primitive interpreter rather than a 13.05-specific formula.
+
 ## 10. Recover the PRNG constants
 
 A correct first word does not determine the two per-build PRNG constants. It
@@ -355,6 +419,26 @@ possibilities. Inverting the recovered `word32` over them yielded eleven exact
 Do not guess a GUID relation from numerical proximity. It must come from Event,
 actor-open or replay-declared relation evidence.
 
+China 13.05 contained no Ace event, so it used a different full-state anchor.
+The initial 127-bit `/Game/GameModes/Bomb/TimedBomb` plaintext was byte-for-byte
+identical in 17 instances across three already supported replays:
+
+```text
+10 0c a2 61 30 10 40 00 00 00 00 00 40 23 20 00
+```
+
+Five independently seeded target instances had the same shape. Inverting the
+known second word32, whose plaintext is zero, produced exactly three possible
+`state1` values for anchor seed 4,909:
+
+```text
+0x27f93a29  0x43744ab6  0x6ce1103c
+```
+
+This is a full 32-bit relation. The other four TimedBomb words and seven
+ceremony successor bytes remained independent filters; none was used to invent
+the three anchor candidates.
+
 ### 10.3 Split the multiplication from the xor-shift
 
 For anchor seed 126:
@@ -389,6 +473,23 @@ The add and subtract offset spellings are wire-equivalent because the offset
 term multiplies by `0x02000000`; only the offset modulo 128 is observable. Use
 the canonical subtract spelling for consistency with other builds.
 
+For China 13.05, scanning all `u32` mixed-A values against all three TimedBomb
+states yielded five inverses: two, one and two per state respectively. Applying
+the other four TimedBomb word32 constraints and all seven ceremony byte
+constraints left one result:
+
+```text
+state1 at seed 4909       0x6ce1103c
+SEED_ADDEND               0xf67761c9
+subtract INIT_A_OFFSET    0x37
+equivalent add offset     0x49
+TAIL_XOR                  0xc9
+```
+
+The checked `--rescan-mixed-a --scan-bits 32` run enumerated the full
+4,294,967,296-value domain and reproduced those five committed inverses before
+selecting this family.
+
 The scan is exhaustive only when `--scan-bits 32` is used. A smaller scan is a
 tool self-check, not evidence.
 
@@ -403,6 +504,16 @@ Instrument one hypothesis at a time and record the movement of counters:
 | False low-byte Z3 constants | 59.505829% |
 | Recovered lanes and constants, old tail accounting | 99.968475% |
 | Recovered transform, every suffix consumed or preserved | 100.000000% |
+
+China 13.05 used a prefix census instead of claiming unmeasured intermediate
+pass rates:
+
+| Candidate state | China 13.05 observation |
+|---|---:|
+| Each of eight prior transforms | 27.931071% to 32.215478% consumed or preserved |
+| Recovered `word64` | 61,440/61,440 eligible RepLayout first words valid |
+| Prefix classification | 61,363 ordinary records + 77 valid early-terminator tails + 0 malformed |
+| Recovered full transform | 276,631/276,631 content blocks consumed or preserved |
 
 A graded improvement is evidence about which stage is right; it is not an
 acceptance threshold. The false Z3 model improved the pass rate and was still
@@ -433,6 +544,26 @@ Consequently, 100% means "every present content block was consumed or
 preserved," not "every bit was semantically decoded." The nonzero tail counter
 must remain visible. See the measured wording in [`USAGE.md`](USAGE.md#supported-builds).
 
+China 13.05 retained 131 ReplayData tails (131,001 bits), 1,416 unresolved RPC
+payloads and 20 checkpoint tails (4,742 bits); exact byte lengths and zero high
+padding were checked for every row. Its 54 ReplayData partial-bunch errors and
+293 checkpoint partial-bunch errors all carried zero captured fragments and
+left zero unfinished partials, the signature of independently entered streams
+that start after those fragment sequences; supported 13.02 and 13.04 replays
+show the same condition. They are surfaced, not relabelled as successful
+reassembly.
+
+One value-level audit also caught 3,064 reported RPC suffix bits from four
+799-bit `AresAbilitySystemComponent:ActiveGameplayEffects` calls. The same
+shape occurred in 20 calls across two supported China 13.02 replays, ruling out
+a China 13.05 transform residual. The generic FunctionParameters walker had
+fabricated one zero-bit `_h0` child before stopping, even though the complete
+parent raw payload was preserved. The observed payload does not follow the
+generic FunctionParameters grammar. A regression now routes that exact
+class/function pair to one whole raw row: all 24 parents remain, no fabricated
+children remain, and both ReplayData and checkpoint RPC suffix counters are
+zero.
+
 A residual may be netted from *loss* only when all of these hold:
 
 - the exact undecoded bit window is copied;
@@ -448,13 +579,15 @@ Otherwise it remains a failed block.
 ## 13. Implement the permanent transform
 
 Only after the measured hypothesis closes should it become a dedicated file.
-For China 13.04 the final implementation is
-[`v13_04_china.rs`](../crates/vrf-transform/src/versions/v13_04_china.rs).
+The replay-recovered implementations are
+[`v13_04_china.rs`](../crates/vrf-transform/src/versions/v13_04_china.rs) and
+[`v13_05_china.rs`](../crates/vrf-transform/src/versions/v13_05_china.rs).
 
-Registration must use the exact branch string:
+Registration must use the exact branch string read from the target replay. For
+13.05 that is:
 
 ```text
-++Ares-Core+release-china-13.04
+++Ares-Core+release-china-13.05
 ```
 
 Never alias a China branch to the global branch with the same version number.
@@ -490,7 +623,10 @@ The final release binary must dispatch from the replay's own branch and report:
 - explicit nonzero preservation counts where applicable;
 - a passing process exit code.
 
-China 13.04 walked 285,488 of 285,488 ReplayData blocks.
+China 13.04 walked 285,488 of 285,488 ReplayData blocks. China 13.05 walked
+276,631 of 276,631, then decoded 8/8 checkpoints and 6,949 checkpoint content
+blocks without transform, framing, field or RPC loss. Both used normal branch
+dispatch.
 
 ### 14.3 Values, not counters
 
@@ -505,6 +641,17 @@ cross-check used Event chunks against typed replicated state:
   final score;
 - overlay, struct, array and checkpoint error counters were zero.
 
+The China 13.05 cross-check used the same independent views:
+
+- 59 `characterDeath` events mapped through `manifest.players`;
+- one self-kill excluded from credited kills;
+- 58 credited kills and 59 deaths matched all ten final scoreboards exactly;
+- one missing assist remained visibly absent rather than becoming zero;
+- `roundStarted` produced rounds 0 through 7 and `switchTeams` occurred after
+  round 3;
+- the final typed score was Red 5 / Blue 3;
+- overlay, struct, array, movement, RPC-suffix and checkpoint errors were zero.
+
 The reproducible filters and totals are recorded in
 [`USAGE.md`](USAGE.md#supported-builds).
 
@@ -517,25 +664,31 @@ implying a regional corpus.
 
 ## 15. Acceptance checklist
 
-Do not mark a China release supported until every applicable item is checked:
+The checked state below is the China 13.05 acceptance record. Reset the boxes
+when using this section as the gate for a later branch.
 
-- [ ] Replay copied out of the game directory; size and SHA-256 recorded.
-- [ ] Exact branch and protocol values inspected.
-- [ ] Prior transforms probed and rejected or one explicitly confirmed.
-- [ ] At least two exact 64-bit vectors use different states.
-- [ ] Search implementation recovers a known historical calibration vector.
-- [ ] `word64` candidate is the shortest measured family or ambiguity is stated.
-- [ ] 32-bit and byte lanes each match several independent observations.
-- [ ] PRNG constants satisfy a full-state relation, not low bytes alone.
-- [ ] Every solver/enumeration candidate is tested against the whole replay.
-- [ ] Every residual failure is explained, preserved or left as a failure.
-- [ ] Final validation uses normal branch dispatch and exits zero.
-- [ ] Python/Rust boundary vectors agree.
-- [ ] Export plus checkpoints has no decode/struct/array loss.
-- [ ] At least one value-level semantic cross-check agrees.
-- [ ] Temporary probes and private paths are absent from the repository.
-- [ ] Full `CONTRIBUTING.md` sweep passes on Rust 1.86.
-- [ ] Verification scope and replay count are documented without inflation.
+- [x] Replay copied out of the game directory; size and SHA-256 recorded.
+- [x] Exact branch and protocol values inspected.
+- [x] Prior transforms probed and rejected or one explicitly confirmed.
+- [x] At least two exact 64-bit vectors use different states.
+- [x] Search implementation recovers a known historical calibration vector.
+- [x] `word64` candidate is the shortest measured family or ambiguity is stated.
+- [x] 32-bit and byte lanes each match several independent observations.
+- [x] PRNG constants satisfy a full-state relation, not low bytes alone.
+- [x] Every solver/enumeration candidate is tested against the whole replay.
+- [x] Every residual failure is explained, preserved or left as a failure.
+- [x] Final validation uses normal branch dispatch and exits zero.
+- [x] Python/Rust boundary vectors agree.
+- [x] Export plus checkpoints has no decode/struct/array loss.
+- [x] At least one value-level semantic cross-check agrees.
+- [x] Temporary probes and private paths are absent from the repository.
+- [x] Full `CONTRIBUTING.md` sweep passes on Rust 1.86.
+- [x] Verification scope and replay count are documented without inflation.
+
+The 12 word64 spellings count as one semantic candidate because their middle
+rotations commute for every input. Known-plaintext successor-state constraints
+eliminated the incomplete PRNG possibilities before one full transform
+remained; that transform was then tested against every replay block.
 
 ## 16. Failure conditions and next moves
 
@@ -553,23 +706,32 @@ Do not mark a China release supported until every applicable item is checked:
 
 Static binary analysis remains an optional source of new primitives or direct
 constants, not a prerequisite. In the 13.04 investigation the copied game image
-was protected/high entropy and did not yield the transform implementation. The
-successful path remained replay-driven. Never attach to or modify a running
-game process merely because replay recovery is difficult.
+was protected/high entropy and did not yield the transform implementation. An
+independent 13.05 lane reached the same evidence limit: the copied executable's
+on-disk code was protected and the relevant Base DLL ordinal entered a
+virtualized section, so there was no trustworthy code cross-reference or
+constant extraction. That lane stopped instead of inferring an algorithm from
+missing data. The successful path remained replay-driven. Never attach to or
+modify a running game process merely because replay recovery is difficult.
 
 ## 17. What is now reproducible
 
-From the committed fixture alone, another contributor can reproduce:
+From the two committed replay-recovery fixtures, another contributor can
+reproduce:
 
 - the China 13.02 calibration of the MITM implementation;
-- the shortest China 13.04 64-bit representative sequence;
-- the unique short-lane complement choice across fourteen vectors;
-- the twelve recorded `mixed_a` inverses;
-- the algebraic reduction to one PRNG constant family;
-- the full `mixed_a` scan by opting into `--rescan-mixed-a`.
+- the shortest China 13.04 sequence and its equivalent representatives;
+- the China 13.04 unique short-lane complement choice across fourteen vectors;
+- the China 13.04 twelve recorded `mixed_a` inverses and final constants;
+- the China 13.05 shortest six-operation family jointly across four states;
+- its 12 retained representatives, differing only by commuting rotate order;
+- its seven word32 and seven byte observations with no complement toggle;
+- its three TimedBomb state candidates, five recorded `mixed_a` inverses and
+  unique final constants after four more word32 plus seven byte constraints;
+- either full `mixed_a` scan by opting into `--rescan-mixed-a`.
 
-The fixture does not reproduce extraction of those observations from a private
-replay. That still requires a suitable replay, temporary measurement code or a
-future structured event/known-plaintext extractor. Keep this distinction
-explicit: reproducing a derivation from evidence is not the same as independently
+The fixtures do not reproduce extraction of those observations from private
+replays. That still requires a suitable replay, temporary measurement code or a
+future structured known-plaintext extractor. Keep this distinction explicit:
+reproducing a derivation from evidence is not the same as independently
 collecting the evidence.

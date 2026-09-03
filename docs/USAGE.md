@@ -480,7 +480,7 @@ Take only the layer you need. Every crate is `#![forbid(unsafe_code)]`, and
 | Layer | Crate | Feature flags |
 |---|---|---|
 | Bit reader / UE wire format | `vrf-bitio` | `alloc` (default; drop it for `no_std`) |
-| Payload transform (8 builds) | `vrf-transform` | none |
+| Payload transform (9 builds) | `vrf-transform` | none |
 | Container (info/header/chunk/event/checkpoint, Oodle) | `vrf-container` | `oodle` `event` `checkpoint` |
 | DemoFrame traversal | `vrf-frame` | none |
 | Dynamic schema + GUID cache + checkpoint tables | `vrf-schema` | `checkpoint` |
@@ -507,7 +507,7 @@ needs it.
 
 The source-free Tencent transform workflow has its own evidence and recovery
 helper under `tools/china_release/`. Its interface, evidentiary limits and China
-13.04 worked example are documented in
+13.04/13.05 worked evidence are documented in
 [China Release Transform Bring-up](CHINA_RELEASE_BRINGUP.md); it is not a normal
 export validator or generated-table pipeline.
 
@@ -521,8 +521,8 @@ export validator or generated-table pipeline.
 | `apply_type_corrections.py` | Applies verified corrections/additions to that file and recomputes the two-line generation header |
 | `extract_checksum_types.py` | `crates/vrf-decode/src/checksum_table.rs` -- `compatible_checksum` -> `FieldType`, learned from the fields the overlay table already declares. Needs an export directory rather than the C# tree, since checksums come from the replay. Checksums whose donors disagree are dropped, which is the safety property. Repeat `--export` to widen the basis; the run **merges** into the committed table rather than replacing it, because a checksum this basis did not happen to see is still correct. `--check` asks whether the two agree *where they overlap* -- not whether they are byte-identical, which a content-addressed table cannot be across different sets of replays. |
 | `extract_sboxes.py` | `crates/vrf-transform/src/sbox.rs` |
-| `extract_golden.py` | `crates/vrf-transform/tests/data/golden_vectors.rs` -- lifts 66 vectors for the six global builds from the C# fixture and computes 22 vectors for both China builds with `china_transform_oracle.py`. Regional fixture rows are discarded if present rather than trusted. |
-| `china_transform_oracle.py` | Not a generator on its own -- independent Python implementations of both China transforms, imported by `extract_golden.py`. China 13.02 replaces fixture vectors from an implementation whose 32-bit and byte lanes were zeroing stubs; China 13.04 is absent from that fixture. These implementations catch porting differences but cannot independently prove a replay-recovered algorithm. |
+| `extract_golden.py` | `crates/vrf-transform/tests/data/golden_vectors.rs` -- lifts 66 vectors for the six global builds from the C# fixture and computes 33 vectors for the three China builds with `china_transform_oracle.py`. Regional fixture rows are discarded if present rather than trusted. |
+| `china_transform_oracle.py` | Not a generator on its own -- independent Python implementations of all three China transforms, imported by `extract_golden.py`. China 13.02 replaces fixture vectors from an implementation whose 32-bit and byte lanes were zeroing stubs; China 13.04 and 13.05 are absent from that fixture. These implementations catch porting differences but cannot independently prove a replay-recovered algorithm. |
 | `extract_equippables.py` | `tools/equippable_table.py` |
 
 **Order matters:** `extract_descriptors.py` -> `apply_type_corrections.py` ->
@@ -580,7 +580,7 @@ m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m); print(len(m
 | `compare_rpc_params.py` | RPC parameter comparison |
 | `compare_with_csharp.py` | Diff against the C# parser |
 | `check_effect_decoder.py` | Effect decoder (12 cases) |
-| `check_ascii.py` | Rust source ASCII sweep (121 files) |
+| `check_ascii.py` | Rust source ASCII sweep (122 files) |
 | `check_docs.py` | This document itself (below) |
 | `atomic_io.py` | Internal containment, recursive-removal and atomic-replacement helpers shared by mutating tools |
 
@@ -737,12 +737,12 @@ field meaning; the analyzer deliberately performs no type inference.
 ### Quick sweep -- after any change
 
 ```bash
-cargo +1.86.0 test --workspace --locked                              # 608 passing
+cargo +1.86.0 test --workspace --locked                              # 610 passing
 cargo +1.86.0 clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo +1.86.0 fmt --check
-python -W error tools/check_ascii.py --check                         # 121 files
+python -W error tools/check_ascii.py --check                         # 122 files
 python -W error tools/check_effect_decoder.py --check                # 12 cases
-python -W error -m unittest discover -s tools/tests -p "test_*.py"   # 560 passing
+python -W error -m unittest discover -s tools/tests -p "test_*.py"   # 562 passing
 python -W error tools/check_docs.py --fast
 python -W error tools/apply_type_corrections.py --check              # 133 corrections
 python -W error tools/extract_checksum_types.py --export tools/fixtures/checksum_export --check
@@ -831,12 +831,16 @@ silent change must be impossible.
 
 | Build | How it is verified |
 |---|---|
+| china-13.05 | One preserved replay + independent Python oracle + full export/checkpoint and semantic cross-check |
 | 12.10, 12.11, 13.00 | One preserved fixture each + golden vectors |
 | 13.01 | 215-replay portion of the current multi-build sweep |
 | 13.02 | Preserved replay + 204-replay portion of the current sweep |
 | china-13.02 | 2 replays (Lotus, Sunset) + an independent Python oracle |
 | 13.04 | Upstream golden vectors + 108-replay export/checkpoint sweep |
 | china-13.04 | One preserved replay + independent Python oracle + full export/checkpoint and semantic cross-check |
+
+Only `++Ares-Core+release-china-13.05` is registered for 13.05. Global
+`++Ares-Core+release-13.05` is not supported by this entry.
 
 The current machine-local multi-build sweep (2026-08-31) reports:
 
@@ -891,6 +895,41 @@ the first-round five-kill sequence ended at 122,503 ms. Taking the latest typed
 member per `RoundResults[index]` independently produced round numbers 0..6,
 one switch before round 4, and a final 5-2 score. Overlay, struct, array and
 checkpoint decode errors were all zero.
+
+china-13.05 measurement uses one preserved 19,764,252-byte replay, label
+`c6a882f3` (SHA-256
+`4a54d799e278a2bc123ac2fda558a8ee93dafc504d423f254123b1d4c9f1cdf9`):
+
+```bash
+vrfkit validate c6a882f3.vrf
+vrfkit export c6a882f3.vrf --out c1305-export --checkpoints
+```
+
+The file's own `++Ares-Core+release-china-13.05` branch selected the transform;
+no forced override was used. Validation and export consumed all 276,631
+ReplayData blocks with zero malformed packets or blocks, framing failures,
+transform failures, lost blocks, lost RPC payloads, unfinished partials or
+unread bytes. The 54 ReplayData partial errors and 293 errors across the eight
+independently entered checkpoint streams all had zero captured fragments and
+left zero unfinished partials: each observed stream began after those fragment
+sequences, rather than losing offered fragments during reassembly. The same
+observable occurs in supported 13.02 and 13.04 replays.
+
+ReplayData preserved 131 RepLayout tails (131,001 bits) and 1,416 unresolved
+RPC payloads; eight checkpoints preserved 20 more tails (4,742 bits). Every
+preservation row passed exact byte-length and high-padding checks. Four
+799-bit `ActiveGameplayEffects` payloads do not follow the generic
+FunctionParameters grammar, so each is retained as one whole raw row rather
+than being misreported as a zero-bit parameter; RPC suffix bits are zero.
+Overlay, struct, array, movement, RPC-truncation, RPC-suffix and checkpoint
+decode errors were all zero.
+
+The value cross-check again used independently encoded Event chunks and typed
+replicated state. There were 59 `characterDeath` events and one self-kill,
+leaving 58 credited kills; every one of the ten players' final replicated K/D
+matched those events. Typed assists were present for nine players and visibly
+absent (`?`) for one. `roundStarted` and `switchTeams` gave rounds 0..7, one
+switch after round 3, and a final Red 5 / Blue 3 score.
 
 Adding a new build takes one `SeededTransform` impl -- two constants and three
 word functions. See the README's

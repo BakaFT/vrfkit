@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "branch": "++Ares-Core+release-china-13.05",
+  "replay": {
+    "label": "c6a882f3",
+    "size_bytes": 19764252,
+    "sha256": "4a54d799e278a2bc123ac2fda558a8ee93dafc504d423f254123b1d4c9f1cdf9",
+    "network_version": 19,
+    "engine_network_protocol_version": 32,
+    "content_blocks": {
+      "total": 276631,
+      "rep_layout": 126155,
+      "class_net_cache": 150476,
+      "bit_count_0": 20,
+      "bit_count_1_to_7": 0,
+      "bit_count_8_to_31": 22656,
+      "bit_count_32_to_63": 44739,
+      "bit_count_64": 1,
+      "bit_count_over_64": 209215
+    },
+    "prior_transform_baseline": [
+      {"transform": "release-12.10", "passed": 84287, "total": 276631, "rate_percent": 30.469109},
+      {"transform": "release-12.11", "passed": 89118, "total": 276631, "rate_percent": 32.215478},
+      {"transform": "release-13.00", "passed": 79692, "total": 276631, "rate_percent": 28.808051},
+      {"transform": "release-13.01", "passed": 81441, "total": 276631, "rate_percent": 29.440301},
+      {"transform": "release-13.02", "passed": 85347, "total": 276631, "rate_percent": 30.852291},
+      {"transform": "release-china-13.02", "passed": 82359, "total": 276631, "rate_percent": 29.772151},
+      {"transform": "release-13.04", "passed": 77266, "total": 276631, "rate_percent": 27.931071},
+      {"transform": "release-china-13.04", "passed": 81855, "total": 276631, "rate_percent": 29.589959}
+    ],
+    "word64_prefix_check": {
+      "eligible_rep_layout_blocks": 61440,
+      "ordinary_first_records": 61363,
+      "early_terminator_tails": 77,
+      "malformed_prefixes": 0
+    }
+  },
+  "word64": {
+    "sbox_path": "crates/vrf-transform/src/sbox.rs",
+    "max_sequence_length": 6,
+    "calibration": {
+      "label": "china-13.02 DefaultCeremony",
+      "bit_count": 64,
+      "actor_net_guid": 312,
+      "state": 376,
+      "cipher_le": "8829915d3e82dbab",
+      "plain_le": "100ca261300f8100",
+      "expected_sequence": ["ROL7", "ROR8", "SBOX", "SWAP", "REV", "ADD1"]
+    },
+    "vectors": [
+      {
+        "label": "china-13.05 DefaultCeremony exact block",
+        "bit_count": 64,
+        "actor_net_guid": 592,
+        "state": 528,
+        "cipher_le": "160da251300f8100",
+        "plain_le": "100ca261300f8100"
+      },
+      {
+        "label": "china-13.05 BaseReplayPlayerState first word",
+        "bit_count": 88,
+        "actor_net_guid": 4,
+        "state": 92,
+        "cipher_le": "d03018c305c18020",
+        "plain_le": "100c820141a06130"
+      },
+      {
+        "label": "china-13.05 AresWorldSettings first word",
+        "bit_count": 95,
+        "actor_net_guid": 2235,
+        "state": 2276,
+        "cipher_le": "0820009e0fa26130",
+        "plain_le": "100ca26130102000"
+      },
+      {
+        "label": "china-13.05 BaseReplayController first word",
+        "bit_count": 287,
+        "actor_net_guid": 2,
+        "state": 285,
+        "cipher_le": "e0300feb039e0ca4",
+        "plain_le": "100ca461300f0804"
+      }
+    ],
+    "plaintext_reference": {
+      "builds": ["release-china-13.02", "release-china-13.04"],
+      "replays": 3,
+      "note": "The three non-ceremony plaintext words repeat byte-for-byte on the same actor-open classes under their registered transforms."
+    },
+    "expected_sequence": ["ADD8", "ROL4", "ROL6", "ROR2", "ROR7", "SUB1"]
+  },
+  "short_lanes": {
+    "expected_xor_complement_toggles": [],
+    "word32": [
+      {"state": 541, "cipher_le": "d1132308", "plain_le": "100ca261"},
+      {"state": 615, "cipher_le": "21b3e30d", "plain_le": "100ca261"},
+      {"state": 613, "cipher_le": "c34f1f44", "plain_le": "100ca261"},
+      {"state": 611, "cipher_le": "0dbe1766", "plain_le": "100ca261"},
+      {"state": 609, "cipher_le": "4462a221", "plain_le": "100ca261"},
+      {"state": 639, "cipher_le": "10a217e6", "plain_le": "100ca261"},
+      {"state": 637, "cipher_le": "44461222", "plain_le": "100ca261"}
+    ],
+    "byte": [
+      {"state": 577, "cipher": "0x8e", "plain": "0x00"},
+      {"state": 579, "cipher": "0xd9", "plain": "0x00"},
+      {"state": 601, "cipher": "0x3b", "plain": "0x00"},
+      {"state": 583, "cipher": "0x33", "plain": "0x00"},
+      {"state": 581, "cipher": "0xd8", "plain": "0x00"},
+      {"state": 571, "cipher": "0x3d", "plain": "0x00"},
+      {"state": 603, "cipher": "0x6e", "plain": "0x00"}
+    ]
+  },
+  "prng": {
+    "seed": 4909,
+    "anchor": "TimedBomb second word32, fixed to zero across 17 instances in three supported replays",
+    "state_candidates": [
+      {"identity": "TimedBomb state candidate 1", "state": "0x27f93a29"},
+      {"identity": "TimedBomb state candidate 2", "state": "0x43744ab6"},
+      {"identity": "TimedBomb state candidate 3", "state": "0x6ce1103c"}
+    ],
+    "mixed_a_solutions": {
+      "0x27f93a29": ["0x17f1bd26", "0xc9f3a3fc"],
+      "0x43744ab6": ["0x969eaff5"],
+      "0x6ce1103c": ["0x1a78139f", "0xcc79fa75"]
+    },
+    "state1_word32": [
+      {"label": "TimedBomb 1", "seed": 4909, "cipher_le": "d8fb0a2e", "plain_le": "00000000"},
+      {"label": "TimedBomb 2", "seed": 7969, "cipher_le": "92f1c9c1", "plain_le": "00000000"},
+      {"label": "TimedBomb 3", "seed": 10677, "cipher_le": "558048f9", "plain_le": "00000000"},
+      {"label": "TimedBomb 4", "seed": 18917, "cipher_le": "b2d2f792", "plain_le": "00000000"},
+      {"label": "TimedBomb 5", "seed": 21261, "cipher_le": "a704528d", "plain_le": "00000000"}
+    ],
+    "state1_byte": [
+      {"label": "CloserCeremony initial fifth byte", "seed": 541, "cipher": "0xf3", "plain": "0x30"},
+      {"label": "ClutchCeremony initial fifth byte", "seed": 615, "cipher": "0x94", "plain": "0x30"},
+      {"label": "AceCeremony initial fifth byte", "seed": 613, "cipher": "0xb7", "plain": "0x30"},
+      {"label": "ThriftyCeremony initial fifth byte", "seed": 611, "cipher": "0x6c", "plain": "0x30"},
+      {"label": "FlawlessCeremony initial fifth byte", "seed": 609, "cipher": "0xb4", "plain": "0x30"},
+      {"label": "DefaultCeremony initial fifth byte", "seed": 639, "cipher": "0xc4", "plain": "0x30"},
+      {"label": "TeamAceCeremony initial fifth byte", "seed": 637, "cipher": "0xb7", "plain": "0x30"}
+    ],
+    "expected": {
+      "identity": "TimedBomb state candidate 3",
+      "state": "0x6ce1103c",
+      "seed_addend": "0xf67761c9",
+      "q_at_anchor": "0x76",
+      "subtract_offset": "0x37",
+      "equivalent_add_offset": "0x49",
+      "tail_xor": "0xc9"
+    }
+  }
+}

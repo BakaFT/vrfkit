@@ -2,8 +2,9 @@
 and the independent regional Python oracles, then emit a Rust data module.
 
 The upstream fixture supplies 66 vectors for six global builds; the Python
-oracles supply 22 more for release-china-13.02 and release-china-13.04.
-Together these 88 vectors cover all eight transforms at every staging boundary.
+oracles supply 33 more for release-china-13.02, release-china-13.04 and
+release-china-13.05. Together these 99 vectors cover all nine transforms at
+every staging boundary.
 
 Usage:
     python tools/extract_golden.py <ValorantSeededTransformTests.cs> <out.rs>
@@ -20,7 +21,9 @@ if __package__:
     from .china_transform_oracle import (
         BRANCH as CHINA_1302_BRANCH,
         CHINA_1304_BRANCH,
+        CHINA_1305_BRANCH,
         China1304Transform,
+        China1305Transform,
         ChinaTransform,
     )
 else:  # direct script execution
@@ -28,7 +31,9 @@ else:  # direct script execution
     from china_transform_oracle import (
         BRANCH as CHINA_1302_BRANCH,
         CHINA_1304_BRANCH,
+        CHINA_1305_BRANCH,
         China1304Transform,
+        China1305Transform,
         ChinaTransform,
     )
 
@@ -45,12 +50,13 @@ EXPECTED_BRANCHES = (
 
 # Historical China fixtures carried release-china-13.02 vectors from an
 # implementation whose 32-bit and byte lanes zeroed their input. Current global
-# fixtures omit both regional branches. If regional rows are encountered they
-# are discarded; both China builds below always come from the independent
+# fixtures omit all regional branches. If regional rows are encountered they
+# are discarded; the three China builds below always come from the independent
 # Python oracle.
 ORACLE_TRANSFORMS = (
     (CHINA_1302_BRANCH, ChinaTransform),
     (CHINA_1304_BRANCH, China1304Transform),
+    (CHINA_1305_BRANCH, China1305Transform),
 )
 ORACLE_BRANCHES = tuple(branch for branch, _ in ORACLE_TRANSFORMS)
 SUPERSEDED_FIXTURE_BRANCHES = ORACLE_BRANCHES
@@ -150,9 +156,10 @@ def main(argv: list[str]) -> int:
         "// Provenance differs by build, and it matters:",
         "//   - the six release-* builds are lifted from the upstream C# fixture,",
         "//     an implementation written by someone else;",
-        "//   - release-china-13.02 and release-china-13.04 are computed by",
-        "//     tools/china_transform_oracle.py; the former replaces known-wrong",
-        "//     fixture stubs and the latter is absent from that fixture.",
+        "//   - release-china-13.02, release-china-13.04 and",
+        "//     release-china-13.05 are computed by",
+        "//     tools/china_transform_oracle.py; the first replaces known-wrong",
+        "//     fixture stubs and the latter two are absent from that fixture.",
         "//",
         f"// {len(cases)} vectors across {len(branches)} builds. Bit counts are chosen to",
         "// exercise every staging boundary of the transform: 0, 1, 7 (tail only),",
