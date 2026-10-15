@@ -12,7 +12,7 @@ external `oozextract` crate. Edition 2024, MSRV 1.86, Apache-2.0.
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 ![rust](https://img.shields.io/badge/rust-1.86%2B-orange.svg)
 ![edition](https://img.shields.io/badge/edition-2024-orange.svg)
-![builds](https://img.shields.io/badge/builds-11.06--13.06-green.svg)
+![builds](https://img.shields.io/badge/builds-11.06--13.08-green.svg)
 ![unsafe](https://img.shields.io/badge/unsafe-none-success.svg)
 
 Derived from [ValorantReplayParser](https://github.com/michel-giehl/ValorantReplayParser)
@@ -301,7 +301,7 @@ prints no overlay counters.
 ## Supported builds and the cost of a new build
 
 The payload transform changes per game build, but far more is **constant**
-across supported releases 11.06 through 13.06: the PRNG and its multipliers, the seed-mix
+across supported releases 11.06 through 13.08: the PRNG and its multipliers, the seed-mix
 skeleton, the 64 -> 32 -> 8 -> tail staging, the tail-XOR handling, and even
 the S-box table itself. Each build supplies its own `word64` / `word32` /
 `byte` operation sequence (order, rotations, complements, and whether the
@@ -333,8 +333,9 @@ S-box stage is used) plus these constants:
 | release-13.04 | `0x076dc658` | `0x28` | - | unused |
 | release-13.05 | `0x48c26613` | `0x13` | **+** | unused |
 | release-13.06 | `0xe974593c` | `0x3c` | **+** | used |
+| release-13.08 | `0x3c17a9fa` | `0x06` | - | used |
 
-In all twenty-four supported builds the **tail-XOR byte equals the low byte of the seed
+In all twenty-five supported builds the **tail-XOR byte equals the low byte of the seed
 addend.** It is a derived value, not an independent constant: `SeededTransform`
 in `crates/vrf-transform/src/lib.rs` defaults `TAIL_XOR` to `SEED_ADDEND as
 u8`, and a build that broke the pattern would fail its 1- and 7-bit vectors,
@@ -348,10 +349,11 @@ word64 / word32 / byte stages; everything else is shared.
 Every build in the table above is confirmed on live replays, not only by
 transform vectors. A machine-local corpus can rotate; the reproducible oracle is
 88 mechanically extracted golden vectors (11 staging boundaries per
-build, eight builds) plus 1,264 native-machine-code vectors for the sixteen
-recovered 11.06--12.09 builds, with a full 48-sample main/checkpoint validation
-([build support validation report](docs/LEGACY_BUILD_SUPPORT.md)). The
-[common audit](docs/BUILD_VERIFICATION.md) checks 38 13.06 replays.
+build, eight builds) plus 1,343 native-machine-code vectors: 1,264 for the
+sixteen recovered 11.06--12.09 builds, with a full 48-sample main/checkpoint
+validation ([build support validation report](docs/LEGACY_BUILD_SUPPORT.md)),
+and 79 for 13.08. The [common audit](docs/BUILD_VERIFICATION.md) checks 38
+13.06 replays.
 
 The 768-byte S-box is shared across builds, which makes it usable as a
 **signature for locating the transform function in a binary.**
