@@ -22,8 +22,9 @@ Derived from [ValorantReplayParser](https://github.com/michel-giehl/ValorantRepl
 or approved by Riot Games.
 
 **Verified state (2026-09-30):** Rust has **708 passing** tests; Python has
-**1045 passing** tests. All 24 supported builds received the same verification
-on **1,018 unique replays**; all **1,018** meet every strict criterion. See
+**1045 passing** tests. The 24 builds through 13.06 received the same verification
+on **1,018 unique replays**; all **1,018** meet every strict criterion. 13.08 was
+checked the same way on 2 replays, and 1 meets every criterion. See
 [build verification](docs/BUILD_VERIFICATION.md) for the measured scope, common
 checks and remaining limits.
 
@@ -49,6 +50,7 @@ can be represented by their rows instead of a duplicate raw RPC.
 
 | 🎮 Build | 🌿 Branch | ✅ Clean/checked | 🔎 Verified by |
 |---|---|---:|---|
+| **13.08** | `release-13.08` | 1/2 | Validation + checkpoints + typed/raw |
 | **13.06** | `release-13.06` | 38/38 | Validation + checkpoints + typed/raw |
 | **13.05** | `release-13.05` | 401/401 | Validation + checkpoints + typed/raw |
 | **13.04** | `release-13.04` | 108/108 | Validation + checkpoints + typed/raw |
@@ -75,12 +77,16 @@ can be represented by their rows instead of a duplicate raw RPC.
 | **11.06** | `release-11.06` | 3/3 | Validation + checkpoints + typed/raw |
 
 Measured on all **1,018 unique available replays** across the 24
-supported branches, every row by the [same acceptance rule](docs/BUILD_VERIFICATION.md):
+branches through 13.06, plus 2 13.08 replays in a separate run, every row by the
+[same acceptance rule](docs/BUILD_VERIFICATION.md):
 ReplayData validation, checkpoint-enabled export, the independent comparisons on
 observed evidence fields, and the strict array and array-leaf error counters.
-✅ **1,018/1,018** are clean -- not a claim that every field is understood.
+✅ **1,018/1,018** through 13.06 are clean -- not a claim that every field is
+understood. The 13.08 replay that is not clean fails the checkpoint GUID
+cross-check on a name that differs only in case, and the audit stops there for
+it ([details](docs/BUILD_VERIFICATION.md#1308)).
 Structured-array child rows are admitted per build and per route: all
-measured routes on 13.01--13.06, a measured subset on 11.06--13.00
+measured routes on 13.01--13.06, a measured subset on 11.06--13.00, none yet on 13.08
 ([legacy route table](docs/LEGACY_BUILD_SUPPORT.md#measured-array-routes)).
 
 All branches are `++Ares-Core+release-<build>`. Adding a build is one
