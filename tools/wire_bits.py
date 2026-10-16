@@ -202,8 +202,9 @@ def iter_selected(path, columns, mask):
     """(physical row ordinal, row) for each row of a Parquet file where
     `mask(batch)` holds; the filter runs in Arrow, before any row dict."""
     ordinal = 0
-    for batch in pq.ParquetFile(path).iter_batches(batch_size=65536, columns=columns, use_threads=False):
-        positions = pc.indices_nonzero(pc.fill_null(mask(batch), False))
-        for index, row in zip(positions.to_pylist(), batch.take(positions).to_pylist()):
-            yield ordinal + index, row
-        ordinal += batch.num_rows
+    with pq.ParquetFile(path, pre_buffer=False) as source:
+        for batch in source.iter_batches(batch_size=65536, columns=columns, use_threads=False):
+            positions = pc.indices_nonzero(pc.fill_null(mask(batch), False))
+            for index, row in zip(positions.to_pylist(), batch.take(positions).to_pylist()):
+                yield ordinal + index, row
+            ordinal += batch.num_rows

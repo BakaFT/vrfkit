@@ -5,7 +5,7 @@ from __future__ import annotations
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from support import TempDirTestCase, run_cli
+from support import TempDirTestCase, retained_parquet_readers, run_cli
 import extract_rounds as rounds
 
 
@@ -73,7 +73,10 @@ class ExtractRoundsTests(TempDirTestCase):
     def test_a_buy_phase_end_off_its_rpc_fails_and_writes_nothing(self):
         self.two_rounds(move_buy_end=7)
         out = self.root / "rounds.parquet"
-        code, _, stderr = self.run_main(out)
+        with retained_parquet_readers() as readers:
+            code, _, stderr = self.run_main(out)
+            self.assertGreaterEqual(len(readers), 2)
+            self.assertTrue(all(reader.closed for reader in readers))
         self.assertEqual(code, 1)
         self.assertIn("phase 4", stderr)
         self.assertFalse(out.exists())

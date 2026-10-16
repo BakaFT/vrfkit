@@ -576,3 +576,27 @@ guards that detected them.
   Compiler, strict Clippy and warnings-as-errors runtime checks passed instead.
 - No implementation commit, push, release, GitHub message or new workflow
   dispatch was made by this fix pass.
+
+### PR #34 Windows CI follow-up
+
+The first PR workflow, run `38849410354` at `75258b4`, passed the four
+Windows/Ubuntu Python matrix jobs, Rust stable, and optimized Windows
+packaging with its packaged replay audit. Its MSRV job passed 738 Rust tests
+but failed the per-module Python run inside the full documentation guard.
+Three additional input cleanup paths reported `WinError 32`:
+`extract_active_effects` on actors, `extract_rounds` on events, and
+`section_timeline` through the shared `wire_bits.iter_selected` actor scan.
+The earlier comparison-reader fix did not fail in this run.
+
+The first two paths now own context-managed, non-prebuffered `ParquetFile`
+inputs. The shared batch iterator also owns its reader until exhaustion,
+filter failure, or explicit generator closure. Retained real-reader assertions
+strengthen the existing failing paths, including the cross-batch ordinal test;
+two new cases cover filter errors and early closure. Test cleanup does not
+close the retained readers until after the ownership assertions.
+
+All five ownership checks fail before this follow-up and pass afterward.
+The three affected modules pass 57 tests, and the full local guard measures
+737 non-Windows Rust cases and 1074 Python cases and exits zero. The failing
+Windows run's incomplete Python count of 1017 is not a new suite-size claim.
+No retry, delay, ignored cleanup failure or skipped test was added.
