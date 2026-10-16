@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from support import TempDirTestCase, run_cli
+from support import TempDirTestCase, retained_parquet_readers, run_cli
 import compare_with_csharp as guard
 
 
@@ -211,7 +211,20 @@ class MovementMultiplicityTests(TempDirTestCase):
             }
         )
         pq.write_table(table, parquet)
-        return guard.compare_movement(csharp, parquet)
+        inputs, real_read = [], pq.read_table
+
+        def retain_input(source, *args, **kwargs):
+            inputs.append(source)
+            return real_read(source, *args, **kwargs)
+
+        with retained_parquet_readers() as readers:
+            with patch.object(guard.pq, "read_table", side_effect=retain_input):
+                report = guard.compare_movement(csharp, parquet)
+            self.assertTrue(readers)
+            self.assertTrue(all(reader.closed for reader in readers))
+            self.assertTrue(inputs)
+            self.assertTrue(all(source.closed for source in inputs))
+        return report
 
     @staticmethod
     def csharp_row(x: float) -> dict:

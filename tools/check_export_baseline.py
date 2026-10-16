@@ -39,6 +39,7 @@ import pyarrow.parquet as pq
 
 import summary_counters as sc
 from atomic_io import sha256_file
+from wire_bits import read_parquet
 
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_EXE = REPO / "target" / "release" / "vrfkit.exe"
@@ -244,9 +245,9 @@ def checkpoint_guid_crosscheck(out_dir: Path) -> tuple[dict, list[str]]:
     """
     counts = dict.fromkeys(GUID_CROSSCHECK_KEYS, 0)
     try:
-        entries = pq.read_table(out_dir / "checkpoint_guid_entries.parquet",
+        entries = read_parquet(out_dir / "checkpoint_guid_entries.parquet",
                                 columns=list(GUID_ENTRY_COLUMNS)).to_pydict()
-        main = pq.read_table(out_dir / "net_guids.parquet",
+        main = read_parquet(out_dir / "net_guids.parquet",
                              columns=list(MAIN_GUID_COLUMNS)).to_pydict()
     except (OSError, ValueError, pa.ArrowException) as exc:
         return counts, [f"checkpoint GUID cross-check cannot read its tables: {exc}"]
@@ -402,8 +403,9 @@ def parquet_shape(out_dir: Path, names, sha: bool = False) -> dict:
     shape = {}
     for name in names:
         path = out_dir / f"{name}.parquet"
-        shape[name] = {"rows": pq.ParquetFile(path).metadata.num_rows,
-                       "bytes": path.stat().st_size}
+        with pq.ParquetFile(path, pre_buffer=False) as source:
+            shape[name] = {"rows": source.metadata.num_rows,
+                           "bytes": path.stat().st_size}
         if sha:
             shape[name]["sha256"] = sha256_file(path)
     return shape
