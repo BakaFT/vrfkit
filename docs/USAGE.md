@@ -911,6 +911,15 @@ An export with no `quality` object is forwarded as `"quality": null`, never as
 zeroes: a consumer must be able to tell "nothing was lost" from "nobody
 counted".
 
+RPC grouping retains packet, actor, nullable subobject, group and function
+handle. `rpc_received` and shot events retain `object_net_guid` as null for
+actor rows, distinct from a real subobject GUID; consumers needing an effective
+target must make their actor fallback explicit. Repeated invocations on the
+same object in one packet remain a separate, counted collision limitation.
+Each effect-array tag and value is read inside its declared field window.
+A short field cannot consume a neighboring field; unreadable halves enter
+`effect_half_read_pairs`.
+
 `events.parquet` crosses as additive `server_timeline_event` rows through a
 deliberately narrow allowlist: server `event_group`, `time_ms`, `time2_ms`, and
 only `word0`/`word1` for groups whose fixed payload arity Rust already
@@ -1103,7 +1112,7 @@ schema drift, not meaning.
 
 The pre-PR sweep, and what CI runs, is in
 [CONTRIBUTING.md](../CONTRIBUTING.md#before-you-open-a-pr); the suites have
-708 Rust tests (Windows), 707 Rust tests (non-Windows), and 1062 Python tests.
+708 Rust tests (Windows), 707 Rust tests (non-Windows), and 1068 Python tests.
 
 **The ASCII rule is correctness, not style.** The Windows console is cp949, so a
 single non-ASCII character in a format string truncates output at that point.

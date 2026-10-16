@@ -4,7 +4,7 @@ Writes the events.ndjson, movement.ndjson and manifest.json that valplay's
 compute_metrics.py consumes; only the serialization is bridged, no metric is
 reimplemented. Replicated properties group by (packet_id, actor, object,
 group_path) into export_group_received events; RPCs (group_path contains
-'_ClassNetCache') by (packet_id, actor, group_path, handle) into rpc_received.
+'_ClassNetCache') by (packet_id, actor, object, group_path, handle) into rpc_received.
 A shot RPC also becomes a valorant_shot_received event: its effect blobs are
 decoded with the manifest's gameplay-tag table, and the gun is the
 FiringState subobject's outer (net_guids.parquet) named from its class path
@@ -594,8 +594,8 @@ def _decode_effect_elements(data: bytes, bit_count: int, spec: _EffectArraySpec,
     """Decode one effect value array -> list of (tag_index, value) tuples.
 
     ``spec.read_value`` must raise on a short read, not return a sentinel:
-    the ``consumed``/``skip_bits`` resync relies on a failed read leaving the
-    earlier value untouched. An independent port of effect.rs over the raw
+    a failed read leaves the earlier value untouched. Each leaf reader ends
+    at its declared payload boundary. An independent port of effect.rs over the raw
     blob: where Rust rejects a blob whole, this keeps what it decoded and
     counts the two shapes that fabricate values downstream, a half-read pair
     (dropped by `_decode_effect_blob`) and any bit left after the loop.
@@ -640,20 +640,20 @@ def _decode_effect_elements(data: bytes, bit_count: int, spec: _EffectArraySpec,
                 break
             if payload_bits > r.bits_remaining():
                 break
-            start = r.tell()
+            # Share the bytes and absolute bit offsets, but not the array's end.
+            payload = _BitReader(data, r.tell() + payload_bits)
+            payload.skip_bits(r.tell())
+            r.skip_bits(payload_bits)
             if handle == spec.tag_handle:
                 try:
-                    tag = r.read_int_packed()
+                    tag = payload.read_int_packed()
                 except (EOFError, ValueError):
                     pass
             elif handle == spec.value_handle:
                 try:
-                    val = spec.read_value(r)
+                    val = spec.read_value(payload)
                 except (EOFError, ValueError):
                     pass
-            consumed = r.tell() - start
-            if consumed < payload_bits:
-                r.skip_bits(payload_bits - consumed)
         elements[idx] = (tag, val)
     # A declared slot missing either half, never visited or lost mid-read, is
     # a pair `_decode_effect_blob` drops.
@@ -1385,7 +1385,7 @@ def _group_rows(cols: _FieldColumns):
         if fn == UNRESOLVED_CLASS_NET_CACHE_PAYLOAD_FIELD_NAME:
             unresolved_cnc_rows += 1
         elif CLASS_NET_CACHE_SUFFIX in gp:
-            rpc_groups[(pid, actor, gp, handle)].append(i)
+            rpc_groups[(pid, actor, obj, gp, handle)].append(i)
         else:
             # Keyed by subobject too: a character's ItemSlot subobjects
             # would otherwise merge into one slot.
@@ -1677,7 +1677,7 @@ def _build_rpc_events(cols: _FieldColumns, rpc_groups: dict,
     """rpc_received events, the shot first for a shot RPC:
     ``(events, shot_count, resolved_weapon_count)``.
 
-    Counted, not fixed: a function invoked TWICE by one actor in one packet
+    Counted, not fixed: a function invoked TWICE on one object in one packet
     is one group whose second call overwrites the first's parameters (nothing
     marks an invocation's end), and a group of only unnamed rows cannot name
     its function, so it is dropped whole.
@@ -1695,7 +1695,7 @@ def _build_rpc_events(cols: _FieldColumns, rpc_groups: dict,
     shot_count = 0
     resolved_weapon_count = 0
 
-    for (pid, actor, gp, handle), row_indices in rpc_groups.items():
+    for (pid, actor, obj, gp, handle), row_indices in rpc_groups.items():
         ms = col_time[row_indices[0]]
 
         rpc_name = None
@@ -1767,7 +1767,7 @@ def _build_rpc_events(cols: _FieldColumns, rpc_groups: dict,
             first = row_indices[0]
             shot_event = _build_shot_event(
                 shot_ctx, ms, pid, actor,
-                cols.obj[first] if cols.obj[first] is not None else actor,
+                obj,
                 cols.channel[first], payload,
                 _EffectBlobs(*map(effect_blobs.get, (
                     "FloatValues", "ObjectValues", "VectorValues"))),
@@ -1783,6 +1783,7 @@ def _build_rpc_events(cols: _FieldColumns, rpc_groups: dict,
             "time_ms": ms,
             "function_name": rpc_name,
             "actor_net_guid": actor,
+            "object_net_guid": obj,
             "payload": payload if payload else None,
         }
         events.append((pid, ms, event))
