@@ -241,6 +241,14 @@ child rows, and `RPC param walks` the RPC parameter walks that `Truncated
 RPCs` is a share of. `--checkpoints` prints the same lines as `Checkpoint
 route children:` and `Checkpoint RPC walks:`.
 
+`Movement section trailers` and `Checkpoint movement section trailers` count
+components and bits left outside a fitting, nonzero `movementBitCount` window.
+They are separate from the unread bits inside a sized/open section and from
+the byte-envelope trailers. Both lines print even at zero. The common build
+audit and decode-error corpus guard reject nonzero section trailers.
+The baseline guard validates and prints these fresh counts against the
+manifest without adding guessed measurements to older baseline snapshots.
+
 `Struct blobs` is the output of the dedicated decoders for `RoundResults` /
 `TeamEconomy` / `RoundInfos`. These decoders are **additive**, so failing
 completely does not move a single other counter -- when build 13.02 shifted a
@@ -1112,7 +1120,7 @@ schema drift, not meaning.
 
 The pre-PR sweep, and what CI runs, is in
 [CONTRIBUTING.md](../CONTRIBUTING.md#before-you-open-a-pr); the suites have
-719 Rust tests (Windows), 718 Rust tests (non-Windows), and 1068 Python tests.
+724 Rust tests (Windows), 723 Rust tests (non-Windows), and 1072 Python tests.
 
 **The ASCII rule is correctness, not style.** The Windows console is cp949, so a
 single non-ASCII character in a format string truncates output at that point.

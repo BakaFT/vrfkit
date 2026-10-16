@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -48,10 +49,12 @@ CHECKPOINT_COUNTERS = sc.keys("P", checkpoint=True)
 #: The frame-walk tallies, after the manifest's `frame_` / `checkpoint_frame_`.
 FRAME_SKIP_KEYS = ("external_data_blobs", "external_data_bytes", "game_specific_bytes",
                    "non_finite_times")
-#: Sink tallies of bits nothing reads, under the same key in the manifest's
-#: `sink` blocks as in COUNTERS (checkpoint: `cp_` + key).
+#: Sink tallies of bits nothing reads, reconciled from pinned counters or
+#: fresh measurements with the manifest's `sink` blocks (checkpoint: `cp_`).
 SINK_TALLY_KEYS = ("movement_envelope_trailers", "movement_envelope_trailer_bits",
+                   "movement_sized_section_trailers", "movement_sized_section_trailer_bits",
                    "active_blinds_empty_trailers")
+
 
 PARQUET_FILES = ("fields", "movement", "actors", "net_guids", "events", "partials")
 CHECKPOINT_PARQUET_FILES = (
@@ -413,7 +416,9 @@ def measure(exe: Path, replay: Path, out_dir: Path, checkpoints: bool = False) -
     code, text = sc.vrfkit(exe, "export", replay, out_dir, checkpoints, timeout=1800)
     if code != 0:
         raise SystemExit(f"export failed (exit {code}): {sc.tail(text, 5, 400)}")
-    counters = sc.read(text, COUNTERS + (CHECKPOINT_COUNTERS if checkpoints else ()))
+    pinned = COUNTERS + (CHECKPOINT_COUNTERS if checkpoints else ())
+    movement_lines = sc.lines("M", False) + (sc.lines("M", True) if checkpoints else ())
+    counters = sc.read(text, pinned + tuple(key for line in movement_lines for key in line.keys))
     try:
         parquet = parquet_shape(
             out_dir, PARQUET_FILES + (CHECKPOINT_PARQUET_FILES if checkpoints else ()), sha=True)
@@ -426,7 +431,9 @@ def measure(exe: Path, replay: Path, out_dir: Path, checkpoints: bool = False) -
         print(format_guid_crosscheck(guid_counts))
     if errors:
         raise SystemExit("; ".join(errors))
-    return {"counters": counters, "parquet": parquet}
+    for line in movement_lines:
+        print(sc.render(line, counters))
+    return {"counters": {key: counters[key] for key in pinned}, "parquet": parquet}
 
 
 def diff(baseline: dict, current: dict) -> list[str]:
