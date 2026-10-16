@@ -600,3 +600,10 @@ The three affected modules pass 57 tests, and the full local guard measures
 737 non-Windows Rust cases and 1074 Python cases and exits zero. The failing
 Windows run's incomplete Python count of 1017 is not a new suite-size claim.
 No retry, delay, ignored cleanup failure or skipped test was added.
+
+Run `38850551061` at `12d60d9` no longer reports the three source-input
+failures. Its remaining error is the active-effects CLI test's own read of
+`tracks.parquet` during the output assertion. That assertion now uses an
+owned `ParquetFile` as well, preserving the same row-count check and closing
+the output before temporary-directory cleanup. This is a fixture-lifetime
+correction, not a change to the analysis output or the expected suite count.

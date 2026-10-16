@@ -178,7 +178,8 @@ class TracksTests(TempDirTestCase):
             code = effects.main(["--export", str(self.export), "--out", str(out / "effects.parquet"),
                                  "--tracks", str(out / "tracks.parquet")])
         self.assertEqual(code, 0)
-        self.assertEqual(pq.read_table(out / "tracks.parquet").num_rows, 3)
+        with pq.ParquetFile(out / "tracks.parquet", pre_buffer=False) as source:
+            self.assertEqual(source.read().num_rows, 3)
         self.assertIn("untyped rows, kept with null coordinates: 1", stdout.getvalue())
 
     def test_an_output_naming_an_export_table_or_the_other_output_is_refused(self):
