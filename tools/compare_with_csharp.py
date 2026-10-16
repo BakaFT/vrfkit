@@ -100,7 +100,8 @@ def compare_group_paths(cs_manifest: dict, vk_manifest: dict,
     vk_paths = {g["path"] for g in vk_manifest.get("net_field_export_groups", [])}
 
     if vk_parquet_path.exists():
-        tbl = pq.read_table(vk_parquet_path, columns=["group_path"])
+        with pq.ParquetFile(vk_parquet_path, pre_buffer=False) as source:
+            tbl = source.read(columns=["group_path"])
         distinct = len(set(tbl.column("group_path").to_pylist()))
         lines.append(f"vrfkit parquet distinct group_path: {distinct}")
     else:
@@ -190,7 +191,8 @@ def compare_group_field_coverage(cs_events_path: Path, vk_parquet_path: Path):
         lines.append("  fields.parquet not found — cannot compare.")
         return "\n".join(lines), [f"fields.parquet not found at {vk_parquet_path}"]
 
-    tbl = pq.read_table(vk_parquet_path, columns=["group_path", "field_name"])
+    with pq.ParquetFile(vk_parquet_path, pre_buffer=False) as source:
+        tbl = source.read(columns=["group_path", "field_name"])
     vk_pairs: set[tuple[str, str]] = set()
     vk_unnamed = 0
     for gp, fn in zip(tbl.column("group_path").to_pylist(),
@@ -223,7 +225,8 @@ def vrfkit_rpc_names(vk_parquet_path: Path) -> Counter:
     (`ActiveGameplayEffects` on 02d4d478) counts among the functions, as the
     bundle publishes it.
     """
-    tbl = pq.read_table(vk_parquet_path, columns=["group_path", "field_name"])
+    with pq.ParquetFile(vk_parquet_path, pre_buffer=False) as source:
+        tbl = source.read(columns=["group_path", "field_name"])
     names: Counter = Counter()
     for gp, fn in zip(tbl.column("group_path").to_pylist(),
                       tbl.column("field_name").to_pylist()):
