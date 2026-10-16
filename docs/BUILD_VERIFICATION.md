@@ -44,6 +44,7 @@ contains build aggregates, input hashes and the complete finding list.
 | 13.04 | 108 | 108 | 67,440,898 | 2,474,063 | 1,357,848 |
 | 13.05 | 401 | 401 | 253,658,021 | 9,310,150 | 5,085,060 |
 | 13.06 | 38 | 38 | 25,546,790 | 919,543 | 547,597 |
+| 13.08 | 2 | 1 | 1,539,679 | 56,791 | 19,975 |
 
 Preserved unresolved RPC payloads total
 **5,589,152 main / 1,666 checkpoint**.
@@ -52,6 +53,37 @@ Their associated skipped-bit counters are
 The separately reported RPC suffix counters are
 **24,926,105 main / 0 checkpoint bits**.
 These nonzero populations remain outside a claim of complete semantic decoding.
+
+## 13.08
+
+The 13.08 row comes from a separate run of the same tool on 2 replays, with
+parser commit `f609c3a52fecd918f83951c467a3517eef2f3f39`. Its numbers are not
+part of the 1,018-replay totals above. In the
+[machine-readable report](../tools/fixtures/build_verification.json), the
+top-level `provenance`, `executable_changed`, `build_errors` and `failures`
+describe the 1,018-replay run. Each entry of `supplements` is a later run's
+complete result for the builds it names, and those builds' rows are copied into
+`builds`.
+
+Both replays pass validation (oracle **1,539,679/1,539,679**) and
+checkpoint-enabled export, with no transform, framing, field-stream, array or
+typed-overlay failures, main or checkpoint. One replay fails the checkpoint
+GUID cross-check, and the audit stops there for that replay: its table
+measurements and the independent comparison are not in the report, so the
+**19,975** values compared are the other replay's. Run separately on the
+failing replay's export, `validate_type_evidence.validate(...,
+compare_typed=True)` compares 25,238 values with no width failure or typed
+mismatch.
+
+The cross-check finds 2 of 25,861 indexed entries whose path differs from the
+main stream's, and only in case. Both are net GUID 9901,
+`/Engine/BasicShapes/Sphere`. The checkpoint writes its leaf name as an index
+to the literal `sphere`, first written for `/Game/VFX/Radianite/Meshes/sphere`
+(net GUID 6787) earlier in the same checkpoint. So the checkpoint shares one
+literal between names that differ only in case, which fits Unreal's
+case-insensitive `FName` comparison; the writer itself was not inspected. The
+reader follows the index rule; the cross-check compares case-sensitively. No
+case-only mismatch was observed in the 1,018 exports above.
 
 ## Method
 
@@ -115,9 +147,9 @@ on line endings: compare sources with Git, not by digest alone.
 
 ## Arithmetic evidence
 
-The shared replay audit supplements the transform tests. The sixteen builds
-11.06--12.09 have 79 independently captured native-machine-code cases each;
-the eight other builds have eleven golden cases each. These remain
+The shared replay audit supplements the transform tests. The seventeen builds
+11.06--12.09 and 13.08 have 79 independently captured native-machine-code
+cases each; the eight other builds have eleven golden cases each. These remain
 different sources of arithmetic evidence, not substitutes for the replay
 checks; [LEGACY_BUILD_SUPPORT.md](LEGACY_BUILD_SUPPORT.md) records the 48
 samples used while adding 11.06--12.09.
