@@ -34,7 +34,6 @@ from typing import NamedTuple
 
 try:
     import pyarrow as pa
-    import pyarrow.parquet as pq
     import pyarrow.compute as pc
     import numpy
 except ImportError:
@@ -43,6 +42,7 @@ except ImportError:
 sys.path.insert(0, str(Path(__file__).parent))
 from equippable_table import EQUIPPABLE_BY_PATH  # noqa: E402
 from atomic_io import remove_tree, require_descendant  # noqa: E402
+from wire_bits import read_parquet  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -497,7 +497,7 @@ def _resolve_equippable(net_guid, guid_outer, guid_path, guid_class):
 def _load_net_guids(export_dir):
     """Read net_guids.parquet into (guid -> outer, guid -> path, row count);
     the count is the table's height, since both dicts drop rows."""
-    table = pq.read_table(export_dir / "net_guids.parquet")
+    table = read_parquet(export_dir / "net_guids.parquet")
     guids = table.column("net_guid").to_pylist()
     paths = table.column("path").cast("string").to_pylist()
     outers = table.column("outer_net_guid").to_pylist()
@@ -1338,7 +1338,7 @@ def _load_field_columns(fields_path: Path, verbose: bool) -> _FieldColumns:
     t0 = time.time()
     if verbose:
         print("Loading fields.parquet...")
-    table = pq.read_table(fields_path)
+    table = read_parquet(fields_path)
     n_rows = len(table)
     if verbose:
         print(f"  {n_rows:,} rows loaded in {time.time()-t0:.1f}s")
@@ -1460,7 +1460,7 @@ def _build_server_timeline_events(export_dir: Path, cols: "_FieldColumns",
     public enum constant and the tag/time tuple matches the measured layout.
     Returns ``(events, rows_read)``.
     """
-    table = pq.read_table(export_dir / "events.parquet")
+    table = read_parquet(export_dir / "events.parquet")
     groups = _dict_column_to_pylist(table.column("group"))
     time1 = _numeric_column_to_pylist(table.column("time1"))
     time2 = _numeric_column_to_pylist(table.column("time2"))
@@ -1528,7 +1528,7 @@ def _build_actor_events(export_dir: Path, verbose: bool, tally: "_Tally"):
     events = []
     guid_class = {}
     counts = Counter(dict.fromkeys(_ACTOR_EVENT_TYPES.values(), 0))
-    rows = pq.read_table(export_dir / "actors.parquet").to_pylist()
+    rows = read_parquet(export_dir / "actors.parquet").to_pylist()
     for row in rows:
         raw_event = row["event"]
         event_type = ("actor_spawned" if raw_event == "open"
@@ -1854,7 +1854,7 @@ def _write_movement(movement_path: Path, output_dir: Path, verbose: bool) -> tup
     t0 = time.time()
     if verbose:
         print("Converting movement.parquet...")
-    mv_table = pq.read_table(movement_path, columns=list(_MOVEMENT_COLUMNS))
+    mv_table = read_parquet(movement_path, columns=list(_MOVEMENT_COLUMNS))
     n_mv = len(mv_table)
 
     # Declared non-null, and load-bearing: `to_numpy` turns a uint32 column

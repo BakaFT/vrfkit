@@ -28,6 +28,7 @@ import pyarrow.parquet as pq
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from atomic_io import atomic_write_text  # noqa: E402
+from wire_bits import read_parquet  # noqa: E402
 from to_valplay_bundle import (  # noqa: E402
     CLASS_NET_CACHE_SUFFIX,
     UNRESOLVED_CLASS_NET_CACHE_PAYLOAD_FIELD_NAME,
@@ -295,11 +296,13 @@ def compare_movement(cs_movement_path: Path, vk_movement_path: Path) -> str:
 
     with cs_movement_path.open("r", encoding="utf-8") as f:
         cs_row_count = sum(1 for _ in f)
-    vk_row_count = pq.read_metadata(vk_movement_path).num_rows
+    with pq.ParquetFile(vk_movement_path, pre_buffer=False) as source:
+        vk_row_count = source.metadata.num_rows
+        vk_columns = source.schema_arrow.names
     lines += [f"C# movement rows (in file): {cs_row_count:,}",
               f"vrfkit movement rows: {vk_row_count:,}",
               f"Difference: {vk_row_count - cs_row_count:,} (vrfkit - C#)",
-              f"vrfkit movement columns: {pq.read_schema(vk_movement_path).names}",
+              f"vrfkit movement columns: {vk_columns}",
               f"\nSampling first {MOVEMENT_SAMPLE:,} C# rows for value comparison..."]
 
     cs_sample: list[tuple[int, int, dict]] = []
@@ -316,9 +319,9 @@ def compare_movement(cs_movement_path: Path, vk_movement_path: Path) -> str:
     # movement.parquet's schema is fixed and non-nullable (vrf-export's movement_schema).
     columns = ["time_ms", "character_net_guid", "pos_x", "pos_y", "pos_z", "yaw", "pitch",
                "vel_x", "vel_y", "vel_z"]
-    vk_tbl = ds.dataset(vk_movement_path).to_table(
-        columns=columns,
-        filter=(ds.field("time_ms") >= min_time) & (ds.field("time_ms") <= max_time + 1))
+    vk_tbl = read_parquet(
+        vk_movement_path, columns=columns,
+        filters=(ds.field("time_ms") >= min_time) & (ds.field("time_ms") <= max_time + 1))
     vk = {name: vk_tbl.column(name).to_pylist() for name in columns}
     vk_rows: defaultdict[tuple[int, int], deque[int]] = defaultdict(deque)
     for i, key in enumerate(zip(vk["time_ms"], vk["character_net_guid"])):

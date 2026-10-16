@@ -37,6 +37,7 @@ import pyarrow.parquet as pq
 
 from atomic_io import atomic_write_file, refuse_input_path
 from player_identity import EARLIER_PROVENANCE, load_player_bodies
+from wire_bits import read_parquet
 
 BOMB_CLASS = "BombEquippable.BombEquippable_C"
 
@@ -113,12 +114,12 @@ def load(out_dir: Path):
 
     # Filtered in Arrow (~1% of the rows are read); the first Instigator write
     # per actor depends on the physical order Table.filter keeps.
-    fields = pq.read_table(out_dir / "fields.parquet", columns=list(FIELD_COLUMNS))
+    fields = read_parquet(out_dir / "fields.parquet", columns=list(FIELD_COLUMNS))
     fields = fields.filter(pc.is_in(fields.column("field_name"),
                                     value_set=pa.array(FIELD_NAMES)))
     f = {c: fields.column(c).to_pylist() for c in FIELD_COLUMNS}
 
-    actors = pq.read_table(out_dir / "actors.parquet")
+    actors = read_parquet(out_dir / "actors.parquet")
     a = {c: actors.column(c).to_pylist() for c in
          ("time_ms", "actor_net_guid", "event", "class_path")}
 
@@ -127,7 +128,7 @@ def load(out_dir: Path):
     events = {}
     ev_path = out_dir / "events.parquet"
     if ev_path.exists():
-        et = pq.read_table(ev_path)
+        et = read_parquet(ev_path)
         events = {c: et.column(c).to_pylist() for c in ("group", "time1", "metadata")}
     return f, a, manifest, events
 
