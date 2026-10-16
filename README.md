@@ -22,7 +22,7 @@ Derived from [ValorantReplayParser](https://github.com/michel-giehl/ValorantRepl
 or approved by Riot Games.
 
 **Test suites (2026-10-16):** **708 Rust tests (Windows)**,
-**707 Rust tests (non-Windows)** and **1053 Python tests**.
+**707 Rust tests (non-Windows)** and **1062 Python tests**.
 The historical audit of the 24 builds through 13.06 used the same verification
 on **1,018 unique replays**; all **1,018** meet every strict criterion. 13.08 was
 checked the same way on 2 replays, and 1 meets every criterion. See
@@ -188,7 +188,7 @@ timestamp) are in [`docs/USAGE.md` section 3](docs/USAGE.md#3-output).
 
 Work in progress. Currently verified: `cargo +1.86.0 test --workspace --locked`
 **707 passing (non-Windows)**; the Windows suite contains **708 tests (Windows)**.
-The full Python suite has **1053 passing** tests. The documentation guard
+The full Python suite has **1062 passing** tests. The documentation guard
 measures the executing platform's suites. The historical [common build audit](docs/BUILD_VERIFICATION.md)
 records replay validation, checkpoint export and independent value checks for
 each supported build.
