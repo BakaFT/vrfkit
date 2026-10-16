@@ -19,6 +19,14 @@ class TempDirTestCase(unittest.TestCase):
         return Path(self.enterContext(tempfile.TemporaryDirectory()))
 
 
+def read_parquet(path):
+    """Materialize one fixture file and close its input before returning."""
+    import pyarrow.parquet as pq
+
+    with pq.ParquetFile(path, pre_buffer=False) as source:
+        return source.read()
+
+
 @contextlib.contextmanager
 def retained_parquet_readers():
     """Keep real readers alive until ownership assertions have run."""

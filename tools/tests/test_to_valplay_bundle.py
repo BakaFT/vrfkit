@@ -17,7 +17,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 
-from support import TempDirTestCase
+from support import TempDirTestCase, read_parquet
 import to_valplay_bundle as bundle
 
 
@@ -404,7 +404,7 @@ class MovementLineAssemblyTests(TempDirTestCase):
                 root = self.tmp()
                 path = root / "movement.parquet"
                 write_table(path, oracle_rows()[:3], SPECS["movement"])
-                table = pq.read_table(path)
+                table = read_parquet(path)
                 index = table.schema.get_field_index(column)
                 values = table.column(column).to_pylist()
                 values[1] = None

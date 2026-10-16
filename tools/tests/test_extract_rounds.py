@@ -5,7 +5,7 @@ from __future__ import annotations
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from support import TempDirTestCase, retained_parquet_readers, run_cli
+from support import TempDirTestCase, read_parquet, retained_parquet_readers, run_cli
 import extract_rounds as rounds
 
 
@@ -143,7 +143,10 @@ class ExtractRoundsTests(TempDirTestCase):
         out = self.root / "rounds.parquet"
         code, stdout, _ = self.run_main(out)
         self.assertEqual(code, 0)
-        self.assertEqual(pq.read_table(out).schema, rounds.SCHEMA)
+        with retained_parquet_readers() as readers:
+            self.assertEqual(read_parquet(out).schema, rounds.SCHEMA)
+            self.assertTrue(readers)
+            self.assertTrue(all(reader.closed for reader in readers))
         for key in rounds.COUNT_KEYS:
             self.assertIn(f"  {key}: ", stdout)
         self.assertIn("  non-null: round_ordinal 2, round_number 2, reset_ms 2", stdout)

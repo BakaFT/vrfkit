@@ -607,3 +607,19 @@ failures. Its remaining error is the active-effects CLI test's own read of
 owned `ParquetFile` as well, preserving the same row-count check and closing
 the output before temporary-directory cleanup. This is a fixture-lifetime
 correction, not a change to the analysis output or the expected suite count.
+
+Run `38851438274` at `eb2f062` exposes the same fixture ownership problem
+in the rounds CLI test's `rounds.parquet` assertion. The test fixture audit
+finds 22 remaining single-file `pq.read_table` calls without options.
+They now use the shared test-only `read_parquet` helper, which materializes
+the real table inside an owned reader and closes it before returning.
+Read-before-rewrite fixtures keep their same data transformations; output
+assertions keep their same schema, column, row and value expectations.
+The rounds CLI test retains real reader references until after its ownership
+assertions. No global Arrow monkeypatch or production abstraction is added.
+
+The eight affected modules pass 298 tests, and the full local guard still
+passes 737 non-Windows Rust and 1074 Python cases. Removing only the helper's
+context manager, while retaining its real reader and read, makes the rounds
+ownership assertion fail on an open reader. The context is restored before
+publication. This tests actual closure rather than only reader selection.

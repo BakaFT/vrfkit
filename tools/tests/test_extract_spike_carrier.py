@@ -13,7 +13,7 @@ from unittest import mock
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from support import TempDirTestCase, run_cli
+from support import TempDirTestCase, read_parquet, run_cli
 import extract_spike_carrier as spike
 
 
@@ -243,7 +243,7 @@ class ReconnectedCarrierTests(TempDirTestCase):
                                prog="extract_spike_carrier.py")[0]
                 self.assertEqual(code, 0)
                 self.assertEqual(source.read_bytes(), before)
-                self.assertEqual(pq.read_table(target).column_names, spike.SCHEMA.names)
+                self.assertEqual(read_parquet(target).column_names, spike.SCHEMA.names)
 
     def test_cli_reports_unresolved_custody_at_and_after_the_drop(self):
         for plant_ms, expected in ((299, 0), (300, 1), (301, 1)):
@@ -259,14 +259,14 @@ class ReconnectedCarrierTests(TempDirTestCase):
                      capture_output=True, text=True, encoding="utf-8", errors="strict",
                      check=False)
                 self.assertEqual(result.returncode, expected, result.stderr)
-                self.assertEqual(pq.read_table(target)["owner_net_guid"].to_pylist(),
+                self.assertEqual(read_parquet(target)["owner_net_guid"].to_pylist(),
                                  [1510, 950, 45530])
 
     def test_equal_time_writes_keep_packet_then_physical_row_order(self):
         for packets in ((10, 20, 30), (10, 20, 20), (10, 30, 20)):
             with self.subTest(packets=packets):
                 root = self.export()
-                table = pq.read_table(root / "fields.parquet")
+                table = read_parquet(root / "fields.parquet")
                 fields = table.to_pylist()
                 for row, time, packet, owner in zip(
                         (fields[1], fields[2], fields[5]), (100, 200, 200),

@@ -16,7 +16,7 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from support import TempDirTestCase, run_cli
+from support import TempDirTestCase, read_parquet, run_cli
 import check_export_baseline as guard
 
 
@@ -409,7 +409,7 @@ class CheckpointGuidCrossCheckTests(TempDirTestCase):
         counts, errors = guard.checkpoint_guid_crosscheck(out)
         self.assertIn("cannot read", " ".join(errors))
         write_guid_tables(out, encode_guid_entries())
-        entries = pq.read_table(out / "checkpoint_guid_entries.parquet")
+        entries = read_parquet(out / "checkpoint_guid_entries.parquet")
         pq.write_table(entries.drop_columns(["name_index"]),
                        out / "checkpoint_guid_entries.parquet")
         counts, errors = guard.checkpoint_guid_crosscheck(out)
