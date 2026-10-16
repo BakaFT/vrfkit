@@ -4,6 +4,7 @@ it measured nothing.
 """
 import json
 import unittest
+from unittest.mock import patch
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -74,6 +75,66 @@ class CoverageTextTests(TempDirTestCase):
         joined = " ".join(lines)
         self.assertIn("INVESTIGATE", joined)
         self.assertIn("Armor", joined)
+
+
+class InputLifetimeTests(TempDirTestCase):
+    def inputs(self):
+        root = self.tmp()
+        events, parquet = root / "events.ndjson", root / "fields.parquet"
+        events.write_text(json.dumps({
+            "type": "export_group_received", "export_group_path": PAIR_A[0],
+            "payload": {PAIR_A[1]: 100},
+        }) + "\n", encoding="utf-8")
+        pq.write_table(pa.table({
+            "group_path": [PAIR_A[0]], "field_name": [PAIR_A[1]],
+        }), parquet)
+        return events, parquet
+
+    def test_field_inputs_are_closed_before_comparisons_return(self):
+        events, parquet = self.inputs()
+        real_reader = pq.ParquetFile
+        for compare in (
+            lambda: guard.compare_group_paths({}, {}, parquet),
+            lambda: guard.compare_group_field_coverage(events, parquet),
+            lambda: guard.vrfkit_rpc_names(parquet),
+        ):
+            with self.subTest(compare=compare):
+                readers = []
+
+                def retain_reader(*args, **kwargs):
+                    reader = real_reader(*args, **kwargs)
+                    readers.append(reader)
+                    self.addCleanup(reader.close)
+                    return reader
+
+                with patch.object(guard.pq, "ParquetFile", side_effect=retain_reader):
+                    compare()
+
+                self.assertTrue(readers)
+                self.assertTrue(all(reader.closed for reader in readers))
+
+    def test_field_input_is_closed_when_reading_raises(self):
+        events, parquet = self.inputs()
+        real_reader = pq.ParquetFile
+        readers = []
+        failure = OSError("input read failed")
+
+        def failing_reader(*args, **kwargs):
+            reader = real_reader(*args, **kwargs)
+            readers.append(reader)
+            self.addCleanup(reader.close)
+            read = patch.object(reader, "read", side_effect=failure)
+            read.start()
+            self.addCleanup(read.stop)
+            return reader
+
+        with patch.object(guard.pq, "ParquetFile", side_effect=failing_reader):
+            with self.assertRaises(OSError) as raised:
+                guard.compare_group_field_coverage(events, parquet)
+
+        self.assertIs(raised.exception, failure)
+        self.assertTrue(readers)
+        self.assertTrue(all(reader.closed for reader in readers))
 
 
 class RpcNameTests(TempDirTestCase):
