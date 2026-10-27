@@ -21,11 +21,12 @@ Derived from [ValorantReplayParser](https://github.com/michel-giehl/ValorantRepl
 (2026-09-30); see [`NOTICE.md`](NOTICE.md). Not affiliated with, endorsed by,
 or approved by Riot Games.
 
-**Test suites (2026-10-16):** **738 Rust tests (Windows)**,
-**737 Rust tests (non-Windows)** and **1074 Python tests**.
+**Test suites (2026-10-27):** **739 Rust tests (Windows)**,
+**738 Rust tests (non-Windows)** and **1074 Python tests**.
 The historical audit of the 24 builds through 13.06 used the same verification
 on **1,018 unique replays**; all **1,018** meet every strict criterion. 13.08 was
-checked the same way on 2 replays, and 1 meets every criterion. See
+checked the same way on 2 replays, and 1 meets every criterion; 13.09 on 4
+replays, and all 4 meet every criterion. See
 [build verification](docs/BUILD_VERIFICATION.md) for the measured scope, common
 checks and remaining limits.
 
@@ -51,6 +52,7 @@ can be represented by their rows instead of a duplicate raw RPC.
 
 | 🎮 Build | 🌿 Branch | ✅ Clean/checked | 🔎 Verified by |
 |---|---|---:|---|
+| **13.09** | `release-13.09` | 4/4 | Validation + checkpoints + typed/raw |
 | **13.08** | `release-13.08` | 1/2 | Validation + checkpoints + typed/raw |
 | **13.06** | `release-13.06` | 38/38 | Validation + checkpoints + typed/raw |
 | **13.05** | `release-13.05` | 401/401 | Validation + checkpoints + typed/raw |
@@ -78,7 +80,7 @@ can be represented by their rows instead of a duplicate raw RPC.
 | **11.06** | `release-11.06` | 3/3 | Validation + checkpoints + typed/raw |
 
 Measured on all **1,018 unique available replays** across the 24
-branches through 13.06, plus 2 13.08 replays in a separate run, every row by the
+branches through 13.06, plus 2 13.08 and 4 13.09 replays in separate runs, every row by the
 [same acceptance rule](docs/BUILD_VERIFICATION.md):
 ReplayData validation, checkpoint-enabled export, the independent comparisons on
 observed evidence fields, and the strict array and array-leaf error counters.
@@ -87,7 +89,7 @@ understood. The 13.08 replay that is not clean fails the checkpoint GUID
 cross-check on a name that differs only in case, and the audit stops there for
 it ([details](docs/BUILD_VERIFICATION.md#1308)).
 Structured-array child rows are admitted per build and per route: all
-measured routes on 13.01--13.06, a measured subset on 11.06--13.00, none yet on 13.08
+measured routes on 13.01--13.06, a measured subset on 11.06--13.00, none yet on 13.08--13.09
 ([legacy route table](docs/LEGACY_BUILD_SUPPORT.md#measured-array-routes)).
 
 All branches are `++Ares-Core+release-<build>`. Adding a build is one
@@ -136,7 +138,7 @@ All branches are `++Ares-Core+release-<build>`. Adding a build is one
 - **Reproducible** — Parquet output is byte-for-byte identical run to run.
 - **No `unsafe`** — `#![forbid(unsafe_code)]` in every crate; the only FFI is
   Oodle, isolated in an external crate.
-- **738 Rust tests (Windows)** / **737 Rust tests (non-Windows)** plus
+- **739 Rust tests (Windows)** / **738 Rust tests (non-Windows)** plus
   a layered validation suite (framing / bytes / decode
   errors / semantics).
 
@@ -187,7 +189,7 @@ timestamp) are in [`docs/USAGE.md` section 3](docs/USAGE.md#3-output).
 ## Status
 
 Work in progress. Currently verified: `cargo +1.86.0 test --workspace --locked`
-**737 passing (non-Windows)**; the Windows suite contains **738 tests (Windows)**.
+**738 passing (non-Windows)**; the Windows suite contains **739 tests (Windows)**.
 The full Python suite has **1074 passing** tests. The documentation guard
 measures the executing platform's suites. The historical [common build audit](docs/BUILD_VERIFICATION.md)
 records replay validation, checkpoint export and independent value checks for
