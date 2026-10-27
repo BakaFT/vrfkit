@@ -147,8 +147,8 @@ on line endings: compare sources with Git, not by digest alone.
 
 ## Arithmetic evidence
 
-The shared replay audit supplements the transform tests. The seventeen builds
-11.06--12.09 and 13.08 have 79 independently captured native-machine-code
+The shared replay audit supplements the transform tests. The eighteen builds
+11.06--12.09, 13.08 and 13.09 have 79 independently captured native-machine-code
 cases each; the eight other builds have eleven golden cases each. These remain
 different sources of arithmetic evidence, not substitutes for the replay
 checks; [LEGACY_BUILD_SUPPORT.md](LEGACY_BUILD_SUPPORT.md) records the 48
