@@ -4,7 +4,7 @@ All sixteen builds from 11.06 through 12.09 have verified payload transforms:
 their 48 available replays pass ReplayData validation and checkpoint-enabled
 export, and each build's native reader matches Rust on 79 cases (1,264 native
 cases in `native_vectors.rs`, beside the 88 golden vectors; the file also
-holds 79 cases for 13.08). Unknown branches
+holds 79 cases each for 13.08 and 13.09). Unknown branches
 fail closed. The common all-build audit is
 [BUILD_VERIFICATION.md](BUILD_VERIFICATION.md).
 
@@ -111,8 +111,8 @@ used only for those seven. Recovery needs optional `pefile`, `unicorn` and
 committed vectors and need no game binary or emulator. The input and
 recovered hashes are pinned in `tools/fixtures/native_recovery.json` and
 `tools/fixtures/native_transform_readers.json`. The catalog also pins the
-13.08 executable, which is not protected: `--check` reads it from
-`<archive-root>/13.08/` like the other archived builds.
+13.08 and 13.09 executables, which are not protected: `--check` reads them from
+`<archive-root>/13.08/` and `<archive-root>/13.09/` like the other archived builds.
 
 ```powershell
 python tools/recover_native_binaries.py --binaries '<archive-root>' --output '<recovered-root>'

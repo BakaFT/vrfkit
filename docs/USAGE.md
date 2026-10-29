@@ -680,7 +680,7 @@ Take only the layer you need. Every crate is `#![forbid(unsafe_code)]`, and
 | Layer | Crate | Feature flags |
 |---|---|---|
 | Bit reader / UE wire format | `vrf-bitio` | `alloc` (default; drop it for `no_std`) |
-| Payload transform (25 builds) | `vrf-transform` | none |
+| Payload transform (26 builds) | `vrf-transform` | none |
 | Container (info/header/chunk/event/checkpoint, Oodle) | `vrf-container` | `oodle` `event` `checkpoint` |
 | DemoFrame traversal | `vrf-frame` | none |
 | Dynamic schema + GUID cache + checkpoint tables | `vrf-schema` | `checkpoint` |
@@ -1120,7 +1120,7 @@ schema drift, not meaning.
 
 The pre-PR sweep, and what CI runs, is in
 [CONTRIBUTING.md](../CONTRIBUTING.md#before-you-open-a-pr); the suites have
-738 Rust tests (Windows), 737 Rust tests (non-Windows), and 1074 Python tests.
+739 Rust tests (Windows), 738 Rust tests (non-Windows), and 1074 Python tests.
 
 **The ASCII rule is correctness, not style.** The Windows console is cp949, so a
 single non-ASCII character in a format string truncates output at that point.
@@ -1312,7 +1312,7 @@ Only analysis copies are written; both input and output hashes are checked.
 Use `--build 11.06` to select one build, or omit it for all seven.
 
 `capture_native_transforms.py --binaries <archive-root> --recovered-binaries <recovered-root> --check`
-verifies all 1,343 committed vectors (11.06--12.09 and 13.08) against the
+verifies all 1,422 committed vectors (11.06--12.09, 13.08 and 13.09) against the
 pinned native PE readers. It requires optional `pefile` and `unicorn` packages and the
 executable layout documented in [LEGACY_BUILD_SUPPORT.md](LEGACY_BUILD_SUPPORT.md).
 Without `--check`, it regenerates `crates/vrf-transform/tests/data/native_vectors.rs`.
