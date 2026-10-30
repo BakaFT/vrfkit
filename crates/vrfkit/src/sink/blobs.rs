@@ -693,12 +693,16 @@ impl ExportSink<'_> {
         let (Some(name), Some(kind)) = (field_name, self.struct_blob_kind(field_name)) else {
             return;
         };
+        // One nested array per RoundResults update, aligned to the flat rows.
+        // Other blob kinds leave this vector empty; existing output is unchanged.
+        let mut nested_team_results = Vec::new();
         let elements: Option<Vec<(u32, BlobMembers)>> = match kind {
             StructBlob::RoundResults => {
                 let decoded = self.decode_blob(raw, bit_count, structs::decode_round_results);
                 decoded.map(|rows| {
                     rows.into_iter()
                         .map(|rr| {
+                            nested_team_results.push(rr.team_results);
                             let role = rr.winning_team_role.map(|r| r.as_str().to_owned());
                             let outcome = rr.round_result.map(|o| o.as_str().to_owned());
                             let members = vec![
@@ -760,6 +764,7 @@ impl ExportSink<'_> {
         if !elements.is_empty() {
             self.stats.struct_blobs_decoded += 1;
         }
+        let mut teams_per_round = nested_team_results.into_iter();
         for (index, members) in elements {
             for (member, value_i64, value_str) in members {
                 if value_i64.is_some() || value_str.is_some() {
@@ -768,6 +773,61 @@ impl ExportSink<'_> {
                         value_i64,
                         value_str,
                     );
+                }
+            }
+            // Emit only observed nested fields; absent sparse entries have no
+            // synthetic zero. The existing parent raw_bits remains intact.
+            if let Some(Some(teams)) = teams_per_round.next() {
+                for team in teams {
+                    let ti = team.index;
+                    if let Some(value) = team.team_name {
+                        self.emit_struct_sub_field(
+                            |out| {
+                                put(
+                                    out,
+                                    format_args!("{name}[{index}].TeamResults[{ti}].TeamName"),
+                                )
+                            },
+                            None,
+                            Some(value),
+                        );
+                    }
+                    if let Some(value) = team.team_number {
+                        self.emit_struct_sub_field(
+                            |out| {
+                                put(
+                                    out,
+                                    format_args!("{name}[{index}].TeamResults[{ti}].TeamNumber"),
+                                )
+                            },
+                            Some(i64::from(value)),
+                            None,
+                        );
+                    }
+                    if let Some(value) = team.team_role {
+                        self.emit_struct_sub_field(
+                            |out| {
+                                put(
+                                    out,
+                                    format_args!("{name}[{index}].TeamResults[{ti}].TeamRole"),
+                                )
+                            },
+                            None,
+                            Some(value.as_str().to_owned()),
+                        );
+                    }
+                    if let Some(value) = team.team_outcome {
+                        self.emit_struct_sub_field(
+                            |out| {
+                                put(
+                                    out,
+                                    format_args!("{name}[{index}].TeamResults[{ti}].TeamOutcome"),
+                                )
+                            },
+                            Some(i64::from(value)),
+                            None,
+                        );
+                    }
                 }
             }
         }

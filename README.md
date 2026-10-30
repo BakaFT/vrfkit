@@ -16,10 +16,14 @@ external `oozextract` crate. Edition 2024, MSRV 1.86, Apache-2.0.
 ![unsafe](https://img.shields.io/badge/unsafe-none-success.svg)
 
 Derived from [ValorantReplayParser](https://github.com/michel-giehl/ValorantReplayParser)
-(MIT), last referenced at
+(MIT), with the original reference at
 [`2e4d3ad`](https://github.com/michel-giehl/ValorantReplayParser/commit/2e4d3aded2e892cda21e0a66c4b55c73b3b7a07f)
-(2026-09-30); see [`NOTICE.md`](NOTICE.md). Not affiliated with, endorsed by,
-or approved by Riot Games.
+(2026-09-30). Subsequent upstream changes through
+[`09a8e1e`](https://github.com/michel-giehl/ValorantReplayParser/commit/09a8e1e1d81c48840b8810f523f1595e539b7d55)
+(2026-10-27) are inventoried in
+[`docs/UPSTREAM_AUDIT_2026_10.md`](docs/UPSTREAM_AUDIT_2026_10.md);
+only measured compatible behaviors are ported. See [`NOTICE.md`](NOTICE.md).
+Not affiliated with, endorsed by, or approved by Riot Games.
 
 **Test suites (2026-10-27):** **739 Rust tests (Windows)**,
 **738 Rust tests (non-Windows)** and **1074 Python tests**.

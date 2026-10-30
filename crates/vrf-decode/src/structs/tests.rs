@@ -118,6 +118,7 @@ fn round_results_rows_decode_to_the_pinned_values() {
             winning_team_role: Some(role),
             round_result: Some(outcome),
             winning_team_mode: None,
+            team_results: None,
         };
         assert_eq!(results, [want], "{digits}");
     }
@@ -126,7 +127,7 @@ fn round_results_rows_decode_to_the_pinned_values() {
 /// Round 0 of a recorded 13.09 RoundResults update: 761 bits, every member
 /// present, TeamResults holding Blue and Red.
 #[test]
-fn round_results_1309_reads_winning_team_mode_and_skips_team_results() {
+fn round_results_1309_decodes_nested_team_results_and_rejects_renamed_member() {
     let data = hex(
         "0202a60641955600000020c456570600000000a06a20d646030201576905000000426c7565         0000000000b04001000000b206a235080081ab3002000000a9323200000000005820010000         005983d01a080000170174e104047821200100000000",
     );
@@ -138,9 +139,39 @@ fn round_results_1309_reads_winning_team_mode_and_skips_team_results() {
         winning_team_role: Some(AresTeamRole::Defender),
         round_result: Some(AresRoundOutcome::Elimination),
         winning_team_mode: Some(1),
+        team_results: Some(vec![
+            TeamRoundResult {
+                index: 0,
+                team_name: Some("Blue".to_owned()),
+                team_number: Some(1),
+                team_role: Some(AresTeamRole::Defender),
+                team_outcome: Some(1),
+            },
+            TeamRoundResult {
+                index: 1,
+                team_name: Some("Red".to_owned()),
+                team_number: Some(2),
+                team_role: Some(AresTeamRole::Attacker),
+                team_outcome: Some(2),
+            },
+        ]),
     };
     assert_eq!(results, [want]);
     assert_eq!(reader.bits_remaining(), 0);
+
+    // A name drift inside the nested array must not silently emit plausible
+    // team outcomes. The raw parent survives the error in the export sink.
+    let mut renamed = bomb_game_state_1309();
+    renamed[88] = Some("UnexpectedTeamRole");
+    let mut reader = BitReader::with_bit_len(&data, 761).unwrap();
+    assert!(matches!(
+        decode_round_results(&mut reader, &renamed),
+        Err(StructBlobError::UnsupportedMember {
+            handle: 88,
+            context: "TeamResults",
+            ..
+        })
+    ));
 }
 
 /// Bytes under the other build's declaration, or under none, FAIL by the

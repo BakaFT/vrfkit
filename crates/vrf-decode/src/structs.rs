@@ -27,7 +27,7 @@
 //!   variable width), `EliminatedTeams` (skipped; declared at TWO consecutive
 //!   handles in every build, one name arm covering both). 13.09 adds
 //!   `WinningTeamMode` (an enum byte with unknown names, kept raw) and the
-//!   nested `TeamResults` array (skipped).
+//!   nested `TeamResults` array (typed members by declared name, raw parent retained).
 //! - RoundInfos (`OwnerExclusivePlayerInfo`; 40..=44 in both builds):
 //!   `RoundNumber`, `StartOfRoundMoney`, `StartOfRoundLoadoutValue`,
 //!   `EndOfRoundMoney`, `EndOfRoundLoadoutValue` (all Int32).
@@ -48,7 +48,9 @@ mod team_economy;
 mod tests;
 
 pub use round_infos::{PlayerRoundInfo, decode_round_infos};
-pub use round_results::{AresRoundOutcome, AresTeamRole, RoundResult, decode_round_results};
+pub use round_results::{
+    AresRoundOutcome, AresTeamRole, RoundResult, TeamRoundResult, decode_round_results,
+};
 pub use team_economy::{TeamEconomyUpdate, decode_team_economy, decode_team_economy_declared};
 
 /// Errors that can occur while decoding a struct-array blob.
