@@ -650,6 +650,7 @@ otherwise reports a 999-round reserve.
 |---|---|---|
 | One row per played round (phases, `buy_end_ms`, result) | `tools/extract_rounds.py` -> `rounds.parquet` | ✅ derived view; a surrender pads `RoundResults` with awarded rounds nobody played (12 on each public fixture), which make no row |
 | Round result (winning team) | `RoundResults` struct blob | ✅ name-based (survives handle shifts) |
+| Per-team round results (13.09) | `RoundResults[round].TeamResults[index].{TeamName,TeamNumber,TeamRole,TeamOutcome}` | ✅ additive, sparse and declaration-driven; the enum outcome is kept numeric, and the raw parent blob is preserved |
 | Team score | derived / `BaseTeamState.Wins`/`Points` | ✅ (R1–R5 invariants verified) |
 | Round number | `events.roundStarted` word0 / `RoundNumber` | ✅ |
 | Half / side swap / overtime | `events.switchTeams` | ✅ |
