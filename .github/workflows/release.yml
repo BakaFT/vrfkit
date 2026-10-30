@@ -44,7 +44,11 @@ jobs:
           workspace = tomllib.loads(Path("Cargo.toml").read_text())["workspace"]["package"]
           assert workspace["version"] == "0.4.0", workspace["version"]
           packages = tomllib.loads(Path("Cargo.lock").read_text())["package"]
-          runtime = [p for p in packages if p["name"].startswith("vrf-") or p["name"] == "vrfkit"]
+          runtime = [
+              p for p in packages
+              if p["name"] == "vrfkit"
+              or (p["name"].startswith("vrf-") and p["name"] != "vrf-testkit")
+          ]
           assert len(runtime) == 10, len(runtime)
           assert all(p["version"] == "0.4.0" for p in runtime)
           PY
