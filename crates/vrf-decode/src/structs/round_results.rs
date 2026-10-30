@@ -70,6 +70,19 @@ wire_enum! {
     }
 }
 
+/// A sparse per-team outcome from 13.09 RoundResults.TeamResults.
+/// Names and handles are read from the replay; an absent field stays None.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TeamRoundResult {
+    /// Zero-based index in TeamResults (not necessarily the numbered team).
+    pub index: u32,
+    pub team_name: Option<String>,
+    pub team_number: Option<i32>,
+    pub team_role: Option<AresTeamRole>,
+    /// Raw enum byte; 1/2 have been observed, not assigned universal semantics.
+    pub team_outcome: Option<u8>,
+}
+
 /// A single round result entry; a `None` member was not sent in this update.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct RoundResult {
@@ -83,6 +96,8 @@ pub struct RoundResult {
     pub round_result: Option<AresRoundOutcome>,
     /// Raw `WinningTeamMode` enum byte, declared from 13.09; its names are unknown.
     pub winning_team_mode: Option<u8>,
+    /// Per-team outcome updates, available since 13.09; raw parent is retained.
+    pub team_results: Option<Vec<TeamRoundResult>>,
 }
 
 /// Decode a `BombGameState.RoundResults` blob; see the module docs for
@@ -107,14 +122,47 @@ pub fn decode_round_results(
                 "WinningTeamMode" => {
                     row.winning_team_mode = Some(read_narrow_byte(sub, name, CONTEXT)?);
                 }
-                // Opaque nested arrays, skipped EXPLICITLY: the
-                // consumption check would read a fall-through as a member that
-                // left its window unread.
-                "EliminatedTeams" | "TeamResults" => sub.skip_remaining(),
+                "TeamResults" => {
+                    row.team_results = Some(decode_team_results(sub, declared)?);
+                }
+                // Still opaque: preserve the whole parent blob, rather than
+                // assert an unmeasured object-reference grammar.
+                "EliminatedTeams" => sub.skip_remaining(),
                 _ => return Ok(None),
             }
             // `read_fname` is self-delimiting, `read_narrow_byte` takes the
             // whole window.
+            Ok(Some(name))
+        },
+    )
+}
+
+/// Decode nested per-team results with the same bounded RepLayout grammar
+/// as the enclosing array. Each handle must resolve through the replay's
+/// declared field table; no 13.09 numeric handle is guessed.
+fn decode_team_results(
+    reader: &mut BitReader<'_>,
+    declared: &[Option<&str>],
+) -> Result<Vec<TeamRoundResult>> {
+    const TEAM_CONTEXT: &str = "TeamResults";
+    decode_elements(
+        reader,
+        TEAM_CONTEXT,
+        |handle| member_name(declared, handle, TEAM_CONTEXT),
+        |index| TeamRoundResult {
+            index,
+            ..TeamRoundResult::default()
+        },
+        |team, name, sub| {
+            match name {
+                "TeamName" => team.team_name = Some(read_fname::<StructBlobError>(sub, 1024)?),
+                "TeamNumber" => team.team_number = Some(sub.read_i32()?),
+                "TeamRole" => team.team_role = Some(AresTeamRole::read(sub, name)?),
+                "TeamOutcome" => {
+                    team.team_outcome = Some(read_narrow_byte(sub, name, TEAM_CONTEXT)?);
+                }
+                _ => return Ok(None),
+            }
             Ok(Some(name))
         },
     )
