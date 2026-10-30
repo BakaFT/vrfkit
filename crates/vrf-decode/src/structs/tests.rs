@@ -166,7 +166,11 @@ fn round_results_1309_decodes_nested_team_results_and_rejects_renamed_member() {
     let mut reader = BitReader::with_bit_len(&data, 761).unwrap();
     assert!(matches!(
         decode_round_results(&mut reader, &renamed),
-        Err(StructBlobError::UnsupportedMember { handle: 88, context: "TeamResults", .. })
+        Err(StructBlobError::UnsupportedMember {
+            handle: 88,
+            context: "TeamResults",
+            ..
+        })
     ));
 }
 

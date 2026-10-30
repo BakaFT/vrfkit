@@ -782,28 +782,48 @@ impl ExportSink<'_> {
                     let ti = team.index;
                     if let Some(value) = team.team_name {
                         self.emit_struct_sub_field(
-                            |out| put(out, format_args!("{name}[{index}].TeamResults[{ti}].TeamName")),
+                            |out| {
+                                put(
+                                    out,
+                                    format_args!("{name}[{index}].TeamResults[{ti}].TeamName"),
+                                )
+                            },
                             None,
                             Some(value),
                         );
                     }
                     if let Some(value) = team.team_number {
                         self.emit_struct_sub_field(
-                            |out| put(out, format_args!("{name}[{index}].TeamResults[{ti}].TeamNumber")),
+                            |out| {
+                                put(
+                                    out,
+                                    format_args!("{name}[{index}].TeamResults[{ti}].TeamNumber"),
+                                )
+                            },
                             Some(i64::from(value)),
                             None,
                         );
                     }
                     if let Some(value) = team.team_role {
                         self.emit_struct_sub_field(
-                            |out| put(out, format_args!("{name}[{index}].TeamResults[{ti}].TeamRole")),
+                            |out| {
+                                put(
+                                    out,
+                                    format_args!("{name}[{index}].TeamResults[{ti}].TeamRole"),
+                                )
+                            },
                             None,
                             Some(value.as_str().to_owned()),
                         );
                     }
                     if let Some(value) = team.team_outcome {
                         self.emit_struct_sub_field(
-                            |out| put(out, format_args!("{name}[{index}].TeamResults[{ti}].TeamOutcome")),
+                            |out| {
+                                put(
+                                    out,
+                                    format_args!("{name}[{index}].TeamResults[{ti}].TeamOutcome"),
+                                )
+                            },
                             Some(i64::from(value)),
                             None,
                         );

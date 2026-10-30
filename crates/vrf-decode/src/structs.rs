@@ -48,7 +48,9 @@ mod team_economy;
 mod tests;
 
 pub use round_infos::{PlayerRoundInfo, decode_round_infos};
-pub use round_results::{AresRoundOutcome, AresTeamRole, RoundResult, TeamRoundResult, decode_round_results};
+pub use round_results::{
+    AresRoundOutcome, AresTeamRole, RoundResult, TeamRoundResult, decode_round_results,
+};
 pub use team_economy::{TeamEconomyUpdate, decode_team_economy, decode_team_economy_declared};
 
 /// Errors that can occur while decoding a struct-array blob.
