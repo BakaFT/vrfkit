@@ -1102,7 +1102,14 @@ python tools/analyze_raw_properties.py ./target/release/vrfkit <corpus> \
   --build 13.02 --build 13.04 --limit-per-build 8
 python tools/analyze_raw_properties.py ./target/release/vrfkit <corpus> \
   --build 13.04 --all --format json > raw-property-inventory.json
+python tools/analyze_raw_properties.py ./target/release/vrfkit <china-corpus> \
+  --build china-13.08 --build china-13.09 --format json
 ```
+
+China labels retain the `china-` prefix in selection and reports; `13.09`
+and `china-13.09` have separate counts. Without `--build`, the newest three
+distinct labels are selected by numeric version, with the label breaking ties.
+Use explicit labels when the input contains both regions and only one is wanted.
 
 JSON schema version 1 contains `scope`, per-build counts and bit-width
 histograms, anonymous recurrence totals/ranks, and the raw-payload integrity
@@ -1120,7 +1127,7 @@ schema drift, not meaning.
 
 The pre-PR sweep, and what CI runs, is in
 [CONTRIBUTING.md](../CONTRIBUTING.md#before-you-open-a-pr); the suites have
-746 Rust tests (Windows), 745 Rust tests (non-Windows), and 1084 Python tests.
+746 Rust tests (Windows), 745 Rust tests (non-Windows), and 1093 Python tests.
 
 **The ASCII rule is correctness, not style.** The Windows console is cp949, so a
 single non-ASCII character in a format string truncates output at that point.
@@ -1256,6 +1263,14 @@ done
 python tools/check_entry_survival.py --root <exports>
 python tools/check_entry_survival.py --root <exports> --show 'Gumshoe'   # one entry's history
 ```
+
+Run each region separately: a root containing both global and China builds
+is rejected (exit 2), even when their version numbers differ. For China,
+put exports from `release-china-13.08` and `release-china-13.09` in one root
+and use the same commands. Reports and expected findings keep labels such as
+`china-13.09`, so a global exception for `13.09` cannot excuse a China loss.
+Expected items from the other region are excluded and counted in the output;
+unmatched items from the audited region still fail as `STALE`.
 
 The previous build must be in the same root: each build is judged against the
 builds before it, gathered back to at least 30 replays. Read three lists. A

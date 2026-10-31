@@ -26,7 +26,7 @@ only measured compatible behaviors are ported. See [`NOTICE.md`](NOTICE.md).
 Not affiliated with, endorsed by, or approved by Riot Games.
 
 **Test suites (2026-10-31, China integration):** **746 Rust tests (Windows)**,
-**745 Rust tests (non-Windows)** and **1084 Python tests**.
+**745 Rust tests (non-Windows)** and **1093 Python tests**.
 The historical audit of the 24 builds through 13.06 used the same verification
 on **1,018 unique replays**; all **1,018** meet every strict criterion. 13.08 was
 checked the same way on 2 replays, and 1 meets every criterion; 13.09 on 4
@@ -208,7 +208,7 @@ timestamp) are in [`docs/USAGE.md` section 3](docs/USAGE.md#3-output).
 
 Work in progress. Currently verified: `cargo +1.86.0 test --workspace --locked`
 **745 passing (non-Windows)**; the Windows suite contains **746 tests (Windows)**.
-The full Python suite has **1084 passing** tests. The documentation guard
+The full Python suite has **1093 passing** tests. The documentation guard
 measures the executing platform's suites. The historical [common build audit](docs/BUILD_VERIFICATION.md)
 records replay validation, checkpoint export and independent value checks for
 each supported build.
