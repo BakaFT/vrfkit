@@ -76,8 +76,8 @@ and all related trademarks are the property of Riot Games, Inc.
 The China 13.02, 13.04 and 13.05 transforms, the independent Python oracle,
 recovery helper and validation-only transform probe derive from
 [BakaFT/vrfkit](https://github.com/BakaFT/vrfkit), including commit
-`36c0bcfd0393f8831cc879bfb671503b287bd127`, under MIT terms preserved in
-[CHINA_LICENSE.txt](CHINA_LICENSE.txt). They have been adapted to the v0.4.0
+`36c0bcfd0393f8831cc879bfb671503b287bd127`, under the MIT terms reproduced
+below. They have been adapted to the v0.4.0
 registry and shared decode pass; the main upstream Apache-2.0 license is
 unchanged.
 

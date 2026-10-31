@@ -19,8 +19,8 @@ numeric version in another region is never an alias.
 | china-13.09 | 0x350f7d3f | 0x41 | 0x3f |
 
 All names have the exact prefix `++Ares-Core+release-`. Unknown branches
-are refused. Provenance and retained MIT terms are in [NOTICE](../NOTICE.md)
-and [CHINA_LICENSE.txt](../CHINA_LICENSE.txt).
+are refused. Provenance and retained MIT terms are in
+[NOTICE](../NOTICE.md#bakaft-china-regional-contributions).
 
 The 13.04 short-lane XOR convention differs from the global convention;
 the registry's `xorc` operation makes that difference explicit. The 13.08
