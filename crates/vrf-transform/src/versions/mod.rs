@@ -17,15 +17,18 @@
 //! | release-13.04 | `0x076dc658` | `0x28` | subtract | no |
 //! | release-china-13.04 | `0xe92064a1` | `0x5f` | subtract | no |
 //! | release-china-13.05 | `0xf67761c9` | `0x37` | subtract | no |
+//! | release-china-13.08 | `0x4a67f535` | `0x4b` | subtract | yes |
+//! | release-china-13.09 | `0x350f7d3f` | `0x41` | subtract | yes |
 //!
-//! In all nine, `TAIL_XOR == SEED_ADDEND & 0xff`. That is asserted per version
+//! In all eleven, `TAIL_XOR == SEED_ADDEND & 0xff`. That is asserted per version
 //! rather than assumed, so a future build that breaks the pattern fails a test
 //! instead of silently corrupting the final partial byte of every payload.
 //!
 //! ## Region is a branch, not a version number
 //!
-//! `release-china-13.02`, `release-china-13.04` and `release-china-13.05` are
-//! Tencent-published clients. Each reports the same format version as its
+//! `release-china-13.02`, `release-china-13.04`, `release-china-13.05`,
+//! `release-china-13.08` and `release-china-13.09` are Tencent-published
+//! clients. Each reports the same format version as its
 //! global counterpart and shares the stable staging skeleton, but its constants
 //! and word functions differ, so dispatch keys on the whole branch string.
 //!
@@ -49,7 +52,7 @@
 //!
 //! ## One file per build
 //!
-//! The nine `impl`s are deliberately kept in separate files. They are near-
+//! The eleven `impl`s are deliberately kept in separate files. They are near-
 //! identical in shape and differ only in the order of a handful of bit
 //! primitives, which is exactly the situation where a copy-paste error is
 //! invisible in review; a per-build file makes `git log` on one build show only
@@ -67,6 +70,8 @@ mod v13_02_china;
 mod v13_04;
 mod v13_04_china;
 mod v13_05_china;
+mod v13_08_china;
+mod v13_09_china;
 
 pub use v12_10::V12_10;
 pub use v12_11::V12_11;
@@ -77,6 +82,8 @@ pub use v13_02_china::V13_02China;
 pub use v13_04::V13_04;
 pub use v13_04_china::V13_04China;
 pub use v13_05_china::V13_05China;
+pub use v13_08_china::V13_08China;
+pub use v13_09_china::V13_09China;
 
 /// One build's payload transform.
 ///
@@ -147,6 +154,8 @@ mod tests {
             row::<V13_04>(),
             row::<V13_04China>(),
             row::<V13_05China>(),
+            row::<V13_08China>(),
+            row::<V13_09China>(),
         ]
     }
 

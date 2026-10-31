@@ -76,15 +76,17 @@ from the recovered algorithm cannot, by itself, prove that algorithm correct.
 
 ## 4. Reproducible artifacts
 
-The recovery helper and both replay-recovered evidence fixtures are:
+The recovery helper and the replay-recovered evidence fixtures are:
 
 ```text
 tools/china_release/recover.py
 tools/china_release/evidence/china_13_04.json
 tools/china_release/evidence/china_13_05.json
+tools/china_release/evidence/china_13_08.json
+tools/china_release/evidence/china_13_09.json
 ```
 
-Neither evidence file contains a replay or account identifier. Both record the
+No evidence file contains a replay or account identifier. Each records the
 preserved replay's label, size and SHA-256; exact little-endian plaintext and
 ciphertext observations with their state/seed; a historical China 13.02
 calibration; full-scan intermediates; and the expected final constants.
@@ -92,7 +94,11 @@ China 13.04 additionally records two target word64 states, fourteen short-lane
 observations, Ace-derived PlayerState candidates and seven `state1` low bytes.
 China 13.05 records four target word64 states, fourteen short-lane observations,
 three TimedBomb-derived full-state candidates, and five independent word32 plus
-seven byte constraints on the successor state.
+seven byte constraints on the successor state. China 13.08 records four word64
+states, fourteen short-lane observations, one TimedBomb full-state candidate and
+twelve word32 plus seven byte successor constraints. China 13.09 records the
+same four word64 classes, fourteen short-lane observations, 32 TimedBomb
+full-state candidates and three word32 plus seven byte successor constraints.
 
 Run the fast, committed-evidence reproductions from the repository root. The
 13.04 fixture remains the default for compatibility:
@@ -103,8 +109,15 @@ python -W error tools/china_release/recover.py \
   tools/china_release/evidence/china_13_05.json
 ```
 
+The 13.08 and 13.09 fixtures replay the same way:
+
+```bash
+python -W error tools/china_release/recover.py   tools/china_release/evidence/china_13_08.json
+python -W error tools/china_release/recover.py   tools/china_release/evidence/china_13_09.json
+```
+
 Run phases separately while investigating; insert an evidence path after the
-script name to select 13.05:
+script name to select another build:
 
 ```bash
 python -W error tools/china_release/recover.py --phase word64
@@ -126,12 +139,13 @@ prints progress. `--scan-bits N` exists only for tool development. A result
 from less than 32 bits is not evidence for a release transform. The final
 13.05 acceptance run enumerated all 4,294,967,296 values, reproduced five
 inverses across three candidate states and returned the one committed constant
-family.
+family. The 13.09 rescan enumerated all 4,294,967,296 values in 108.6 s on one machine and
+reproduced 34 inverses across 32 candidate states.
 
 The helper deliberately reads the repository's generated S-boxes rather than a
-game executable. China 13.04 and 13.05 ultimately do not use an S-box, but the
-search vocabulary includes it and the China 13.02 calibration does use it. No
-private binary is needed to reproduce either committed search.
+game executable. China 13.04 and 13.05 do not use an S-box; 13.08 and 13.09 do,
+and the China 13.02 calibration does. No private binary is needed to reproduce
+any committed search.
 
 ## 5. Preserve the input first
 
@@ -580,8 +594,10 @@ Otherwise it remains a failed block.
 
 Only after the measured hypothesis closes should it become a dedicated file.
 The replay-recovered implementations are
-[`v13_04_china.rs`](../crates/vrf-transform/src/versions/v13_04_china.rs) and
-[`v13_05_china.rs`](../crates/vrf-transform/src/versions/v13_05_china.rs).
+[`v13_04_china.rs`](../crates/vrf-transform/src/versions/v13_04_china.rs),
+[`v13_05_china.rs`](../crates/vrf-transform/src/versions/v13_05_china.rs),
+[`v13_08_china.rs`](../crates/vrf-transform/src/versions/v13_08_china.rs) and
+[`v13_09_china.rs`](../crates/vrf-transform/src/versions/v13_09_china.rs).
 
 Registration must use the exact branch string read from the target replay. For
 13.05 that is:
@@ -703,6 +719,8 @@ remained; that transform was then tested against every replay block.
 | Candidate reaches almost 100% | Could be parser coverage or a subtle transform error | Classify every residual against a known build |
 | Grammar passes but values disagree | Plausible wrong transform or decode schema | Reject support; investigate value evidence |
 | Python vectors agree, replay fails | Both implementations share a wrong hypothesis | Trust the replay failure |
+| Several families pass the word64 vectors at the shortest length | The four first words under-constrain the order | Score every family on the short lanes before choosing; 13.09 left two |
+| Transform passes, a struct blob fails on a new member | Game-side schema change, not a transform residual | Surface the error; decode or skip the member explicitly by declared name |
 
 Static binary analysis remains an optional source of new primitives or direct
 constants, not a prerequisite. In the 13.04 investigation the copied game image
@@ -716,7 +734,7 @@ modify a running game process merely because replay recovery is difficult.
 
 ## 17. What is now reproducible
 
-From the two committed replay-recovery fixtures, another contributor can
+From the committed replay-recovery fixtures, another contributor can
 reproduce:
 
 - the China 13.02 calibration of the MITM implementation;
@@ -728,7 +746,11 @@ reproduce:
 - its seven word32 and seven byte observations with no complement toggle;
 - its three TimedBomb state candidates, five recorded `mixed_a` inverses and
   unique final constants after four more word32 plus seven byte constraints;
-- either full `mixed_a` scan by opting into `--rescan-mixed-a`.
+- the China 13.08 six-operation sequence, its single short-lane complement
+  toggle and its unique constants;
+- the China 13.09 sequence, the second length-six family the short lanes
+  reject, and its unique constants from 32 TimedBomb state candidates;
+- any full `mixed_a` scan by opting into `--rescan-mixed-a`.
 
 The fixtures do not reproduce extraction of those observations from private
 replays. That still requires a suitable replay, temporary measurement code or a

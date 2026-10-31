@@ -162,7 +162,7 @@ These corrupt downstream consumers silently — no test fails when they break.
 
 ## Bringing up a new game build
 
-Riot rotates the payload transform every build. Across the nine in the tree no
+Riot rotates the payload transform every build. Across the eleven in the tree no
 two `word64` implementations are alike — the operator order, the `k` values it
 rotates the state by, and whether the S-box stage runs at all have all changed
 between consecutive releases. What has *never* changed is the skeleton: the
@@ -225,7 +225,7 @@ Use a first-word prefix measurement to isolate `word64` when the constants are
 unknown; do not reject it solely because the total misses the table above.
 
 `TAIL_XOR` is not an independent constant — it is the low byte of
-`SEED_ADDEND` in all nine builds, and a test in `versions/mod.rs` enforces that.
+`SEED_ADDEND` in all eleven builds, and a test in `versions/mod.rs` enforces that.
 
 ### 4. Derive the other two lanes
 

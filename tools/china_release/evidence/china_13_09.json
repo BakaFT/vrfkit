@@ -1,0 +1,451 @@
+{
+  "schema_version": 1,
+  "branch": "++Ares-Core+release-china-13.09",
+  "replay": {
+    "label": "team-cn1309",
+    "size_bytes": 20551030,
+    "sha256": "cdfa35ccd7d3e1ed1ef77e96e3166733a72cfae8458a039ca2183c2c89219492",
+    "network_version": 19,
+    "engine_network_protocol_version": 32
+  },
+  "word64": {
+    "sbox_path": "crates/vrf-transform/src/sbox.rs",
+    "max_sequence_length": 6,
+    "calibration": {
+      "label": "china-13.02 DefaultCeremony",
+      "bit_count": 64,
+      "actor_net_guid": 312,
+      "state": 376,
+      "cipher_le": "8829915d3e82dbab",
+      "plain_le": "100ca261300f8100",
+      "expected_sequence": [
+        "ROL7",
+        "ROR8",
+        "SBOX",
+        "SWAP",
+        "REV",
+        "ADD1"
+      ]
+    },
+    "vectors": [
+      {
+        "state": 524,
+        "cipher_le": "23f6cb85ed75a413",
+        "plain_le": "100ca261300f8100",
+        "label": "DefaultCeremony"
+      },
+      {
+        "state": 92,
+        "cipher_le": "2af63db26034b6ed",
+        "plain_le": "100c820141a06130",
+        "label": "BaseReplayPlayerState"
+      },
+      {
+        "state": 1994,
+        "cipher_le": "0c76cb8d1d0a9b13",
+        "plain_le": "100ca26130102000",
+        "label": "AresWorldSettings"
+      },
+      {
+        "state": 285,
+        "cipher_le": "27f6df41edf976fd",
+        "plain_le": "100ca461300f0804",
+        "label": "BaseReplayController"
+      }
+    ],
+    "expected_sequence": [
+      "NOT",
+      "SUB6",
+      "REV",
+      "ADD4",
+      "REV",
+      "SBOX"
+    ]
+  },
+  "short_lanes": {
+    "word32": [
+      {
+        "state": 307,
+        "cipher_le": "ded9756a",
+        "plain_le": "100ca261",
+        "seed": 307,
+        "later_cipher": 253
+      },
+      {
+        "state": 305,
+        "cipher_le": "5eda756c",
+        "plain_le": "100ca261",
+        "seed": 305,
+        "later_cipher": 214
+      },
+      {
+        "state": 615,
+        "cipher_le": "de8c8069",
+        "plain_le": "100ca261",
+        "seed": 615,
+        "later_cipher": 38
+      },
+      {
+        "state": 613,
+        "cipher_le": "5e8d806e",
+        "plain_le": "100ca261",
+        "seed": 613,
+        "later_cipher": 41
+      },
+      {
+        "state": 611,
+        "cipher_le": "de8d806a",
+        "plain_le": "100ca261",
+        "seed": 611,
+        "later_cipher": 113
+      },
+      {
+        "state": 633,
+        "cipher_le": "5e88406d",
+        "plain_le": "100ca261",
+        "seed": 633,
+        "later_cipher": 27
+      },
+      {
+        "state": 631,
+        "cipher_le": "de884069",
+        "plain_le": "100ca261",
+        "seed": 631,
+        "later_cipher": 38
+      }
+    ],
+    "byte": [
+      {
+        "state": 593,
+        "cipher": "0xaf",
+        "plain": "0x00"
+      },
+      {
+        "state": 579,
+        "cipher": "0x2b",
+        "plain": "0x00"
+      },
+      {
+        "state": 581,
+        "cipher": "0x86",
+        "plain": "0x00"
+      },
+      {
+        "state": 277,
+        "cipher": "0x3c",
+        "plain": "0x00"
+      },
+      {
+        "state": 279,
+        "cipher": "0x30",
+        "plain": "0x00"
+      },
+      {
+        "state": 607,
+        "cipher": "0x8c",
+        "plain": "0x00"
+      },
+      {
+        "state": 577,
+        "cipher": "0x37",
+        "plain": "0x00"
+      }
+    ],
+    "expected_xor_complement_toggles": []
+  },
+  "prng": {
+    "seed": 5365,
+    "state_candidates": [
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732242793
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732245865
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732247401
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732250473
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732251241
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732254313
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732255849
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732258921
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732275625
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732278697
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732280233
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732283305
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732284073
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732287145
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732288681
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732291753
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732767085
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732770157
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732771693
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732774765
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732775533
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732778605
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732780141
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732783213
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732799917
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732802989
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732804525
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732807597
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732808365
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732811437
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732812973
+      },
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2732816045
+      }
+    ],
+    "state1_word32": [
+      {
+        "seed": 5365,
+        "cipher_le": "db2722be",
+        "plain_le": "00000000"
+      },
+      {
+        "seed": 7419,
+        "cipher_le": "2b8321f6",
+        "plain_le": "00000000"
+      },
+      {
+        "seed": 12015,
+        "cipher_le": "3b344af1",
+        "plain_le": "00000000"
+      }
+    ],
+    "state1_byte": [
+      {
+        "seed": 307,
+        "cipher": 253,
+        "plain": 48
+      },
+      {
+        "seed": 305,
+        "cipher": 214,
+        "plain": 48
+      },
+      {
+        "seed": 615,
+        "cipher": 38,
+        "plain": 48
+      },
+      {
+        "seed": 613,
+        "cipher": 41,
+        "plain": 48
+      },
+      {
+        "seed": 611,
+        "cipher": 113,
+        "plain": 48
+      },
+      {
+        "seed": 633,
+        "cipher": 27,
+        "plain": 48
+      },
+      {
+        "seed": 631,
+        "cipher": 38,
+        "plain": 48
+      }
+    ],
+    "mixed_a_solutions": {
+      "0xa2dab769": [
+        "0xf101f0e6"
+      ],
+      "0xa2dac369": [
+        "0x9d92032c"
+      ],
+      "0xa2dac969": [
+        "0xccdaffba"
+      ],
+      "0xa2dad569": [
+        "0x796b1200"
+      ],
+      "0xa2dad869": [
+        "0x380e9cdc"
+      ],
+      "0xa2dae469": [
+        "0x96a095f8"
+      ],
+      "0xa2daea69": [
+        "0x13e7abb0"
+      ],
+      "0xa2daf669": [
+        "0x7279a4cc"
+      ],
+      "0xa2db37a9": [
+        "0x8133b3f7"
+      ],
+      "0xa2db43a9": [
+        "0x2dc3c63d"
+      ],
+      "0xa2db49a9": [
+        "0x5d0cc2cb"
+      ],
+      "0xa2db55a9": [
+        "0x99cd511"
+      ],
+      "0xa2db58a9": [
+        "0xebced2c2"
+      ],
+      "0xa2db64a9": [
+        "0x26d25909",
+        "0x985ee508"
+      ],
+      "0xa2db6aa9": [
+        "0xc7a7e196"
+      ],
+      "0xa2db76a9": [
+        "0x2ab67dd",
+        "0x7437f3dc"
+      ],
+      "0xa2e2b76d": [
+        "0x5a1b50ba"
+      ],
+      "0xa2e2c36d": [
+        "0xb8ad49d6"
+      ],
+      "0xa2e2c96d": [
+        "0x35f45f8e",
+        "0xe7f64664"
+      ],
+      "0xa2e2d56d": [
+        "0x948658aa"
+      ],
+      "0xa2e2d86d": [
+        "0x5329e386"
+      ],
+      "0xa2e2e46d": [
+        "0xb1bbdca2"
+      ],
+      "0xa2e2ea6d": [
+        "0x2f02f25a"
+      ],
+      "0xa2e2f66d": [
+        "0x8d94eb76"
+      ],
+      "0xa2e337ad": [
+        "0x9c4efaa1"
+      ],
+      "0xa2e343ad": [
+        "0x48df0ce7"
+      ],
+      "0xa2e349ad": [
+        "0xe9b49574"
+      ],
+      "0xa2e355ad": [
+        "0x24b81bbb"
+      ],
+      "0xa2e358ad": [],
+      "0xa2e364ad": [
+        "0xb37a2bb2"
+      ],
+      "0xa2e36aad": [
+        "0xe2c32840"
+      ],
+      "0xa2e376ad": [
+        "0x8f533a86"
+      ]
+    },
+    "expected": {
+      "identity": "TimedBomb initial zero word",
+      "state": 2732280233,
+      "seed_addend": 890207551,
+      "q_at_anchor": 52,
+      "subtract_offset": 65,
+      "equivalent_add_offset": 63,
+      "tail_xor": 63
+    }
+  }
+}

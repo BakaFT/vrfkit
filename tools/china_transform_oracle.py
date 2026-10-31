@@ -4,7 +4,7 @@ Every global build's golden vectors are lifted from the upstream C# fixture,
 which is an implementation written by someone else and therefore an independent
 check on our port. The regional builds need a separate oracle: China 13.02's
 fixture rows came from an implementation with zeroing 32-bit and byte lanes,
-and China 13.04/13.05 are absent from the fixture entirely.
+and China 13.04/13.05/13.08/13.09 are absent from the fixture entirely.
 
 This module supplies those second implementations. It is written against the
 measured algorithm descriptions rather than transliterated from the Rust, so it
@@ -12,19 +12,24 @@ catches transcription, masking and endianness slips between the two ports. It
 cannot, on its own, prove an algorithm recovered from the replay is right; the
 real-replay grammar oracle provides that independent evidence.
 
-The S-boxes are read from the generated Rust table rather than re-embedded. Only
-China 13.02 uses them, and they are shared with global builds whose vectors come
-from the C# fixture, so a corrupt table is independently detectable.
+The S-boxes are read from the generated Rust table rather than re-embedded.
+China 13.02, 13.08 and 13.09 use them, and they are shared with global builds
+whose vectors come from the C# fixture, so a corrupt table is independently
+detectable.
 
 Usage:
     from china_transform_oracle import (
         ChinaTransform,
         China1304Transform,
         China1305Transform,
+        China1308Transform,
+        China1309Transform,
     )
     ChinaTransform(sbox_path).transform(payload_bytes, bit_count, seed)
     China1304Transform(sbox_path).transform(payload_bytes, bit_count, seed)
     China1305Transform(sbox_path).transform(payload_bytes, bit_count, seed)
+    China1308Transform(sbox_path).transform(payload_bytes, bit_count, seed)
+    China1309Transform(sbox_path).transform(payload_bytes, bit_count, seed)
 """
 
 from __future__ import annotations
@@ -35,6 +40,8 @@ from pathlib import Path
 BRANCH = "++Ares-Core+release-china-13.02"
 CHINA_1304_BRANCH = "++Ares-Core+release-china-13.04"
 CHINA_1305_BRANCH = "++Ares-Core+release-china-13.05"
+CHINA_1308_BRANCH = "++Ares-Core+release-china-13.08"
+CHINA_1309_BRANCH = "++Ares-Core+release-china-13.09"
 
 MASK8 = 0xFF
 MASK32 = 0xFFFF_FFFF
@@ -300,3 +307,75 @@ class China1305Transform(ChinaTransform):
         right = (mixes[2] % 7) + 1 + (mixes[7] % 7) + 1
         value = rotl(value, left - right, 8, MASK8)
         return (value - mixes[1]) & MASK8
+
+
+class China1308Transform(ChinaTransform):
+    """The replay-recovered `release-china-13.08` transform.
+
+    Evidence: tools/china_release/evidence/china_13_08.json and
+    docs/CHINA_RELEASE_BRINGUP.md. These vectors alone do not prove the
+    recovered algorithm; full-replay and semantic checks do.
+    """
+    SEED_ADDEND = 0x4A67_F535
+    INIT_A_OFFSET = 0x4B
+    TAIL_XOR = 0x35
+
+    def word64(self, value: int, state: int) -> int:
+        value = (~value) & MASK64
+        value = swap_adjacent(value, MASK64)
+        value = (value + rotr(state, 5, 32, MASK32)) & MASK64
+        value = (value - rotr(state, 7, 32, MASK32)) & MASK64
+        value = substitute(value, self.sbox64, 8)
+        return value ^ ((~rotr(state, 3, 32, MASK32)) & MASK64)
+
+    def word32(self, value: int, state: int) -> int:
+        value = (~value) & MASK32
+        value = swap_adjacent(value, MASK32)
+        value = (value + rotl(state, 5, 32, MASK32)) & MASK32
+        value = (value - rotl(state, 7, 32, MASK32)) & MASK32
+        value = substitute(value, self.sbox32, 4)
+        return value ^ rotl(state, 3, 32, MASK32)
+
+    def byte(self, value: int, state: int) -> int:
+        value = (~value) & MASK8
+        value = swap_adjacent(value, MASK8)
+        value = (value + ((state * 11**5) & MASK32)) & MASK8
+        value = (value - ((state * 11**7) & MASK32)) & MASK8
+        value = self.sbox8[value]
+        return value ^ (((state * 11**3) & MASK32) & MASK8)
+
+
+class China1309Transform(ChinaTransform):
+    """The replay-recovered `release-china-13.09` transform.
+
+    Evidence: tools/china_release/evidence/china_13_09.json and
+    docs/CHINA_RELEASE_BRINGUP.md. These vectors alone do not prove the
+    recovered algorithm; full-replay and semantic checks do.
+    """
+    SEED_ADDEND = 0x350F_7D3F
+    INIT_A_OFFSET = 0x41
+    TAIL_XOR = 0x3F
+
+    def word64(self, value: int, state: int) -> int:
+        value = (~value) & MASK64
+        value = (value - rotr(state, 6, 32, MASK32)) & MASK64
+        value = reverse64_no_16(value)
+        value = (value + rotr(state, 4, 32, MASK32)) & MASK64
+        value = reverse64_no_16(value)
+        return substitute(value, self.sbox64, 8)
+
+    def word32(self, value: int, state: int) -> int:
+        value = (~value) & MASK32
+        value = (value - rotl(state, 6, 32, MASK32)) & MASK32
+        value = reverse_bits(value, 32)
+        value = (value + rotl(state, 4, 32, MASK32)) & MASK32
+        value = reverse_bits(value, 32)
+        return substitute(value, self.sbox32, 4)
+
+    def byte(self, value: int, state: int) -> int:
+        value = (~value) & MASK8
+        value = (value - ((state * 11**6) & MASK32)) & MASK8
+        value = reverse_bits(value, 8)
+        value = (value + ((state * 11**4) & MASK32)) & MASK8
+        value = reverse_bits(value, 8)
+        return self.sbox8[value]
