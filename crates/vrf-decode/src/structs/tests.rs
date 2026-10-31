@@ -44,6 +44,26 @@ fn bomb_game_state_1302() -> Vec<Option<&'static str>> {
     d
 }
 
+/// `BombGameState_C` (and its Swiftplay twin) on China 13.09:
+/// `WinningTeamMode` and the nested `TeamResults` (members 86..=89) join the
+/// RoundResults members, which move to 82..=93.
+fn bomb_game_state_china_1309() -> Vec<Option<&'static str>> {
+    let mut d = vec![None; 94];
+    d[81] = Some("RoundResults");
+    d[82] = Some("WinningTeamMode");
+    d[83] = Some("WinningTeam");
+    d[84] = Some("WinningTeamRole");
+    d[85] = Some("TeamResults");
+    d[86] = Some("TeamName");
+    d[87] = Some("TeamNumber");
+    d[88] = Some("TeamRole");
+    d[89] = Some("TeamOutcome");
+    d[91] = Some("RoundResult");
+    d[92] = Some("EliminatedTeams");
+    d[93] = Some("EliminatedTeams");
+    d
+}
+
 /// `OwnerExclusivePlayerInfo`, identical on both builds measured.
 fn owner_exclusive_player_info() -> Vec<Option<&'static str>> {
     let mut d = vec![None; 45];
@@ -189,6 +209,87 @@ fn round_results_unknown_member_name_is_reported_by_name() {
         }
         other => panic!("expected UnsupportedMember, got {other:?}"),
     }
+}
+
+/// Rounds 0 and 3 of a China 13.09 Swiftplay replay (t=132140ms, 761 bits;
+/// t=436435ms, 769 bits). Only the element that changed is sent. The values
+/// were read independently with a Python bit parser over the same blobs.
+const ROUND_RESULTS_CHINA_1309: [(&str, u64); 2] = [
+    (
+        "0202a6064115460000002055460600000000a06a10d6460302015761040000005265640000000000b04002000000b206a135080081abb40200000021b6ba32000000000058a0000000005903d11a0800001701740105047841f2080000000000",
+        761,
+    ),
+    (
+        "0808a60641955600000020c456570600000000a06a20d646030201576905000000426c75650000000000b04001000000b206a235080081ab3002000000a9323200000000005820010000005983d01a08000017217401050478415a080000000000",
+        769,
+    ),
+];
+
+#[test]
+fn round_results_china_1309_reads_mode_and_nested_team_results() {
+    use AresRoundOutcome::{Defuse, Elimination};
+    use AresTeamRole::{Attacker, Defender};
+    let team = |index, name: &str, number, role, outcome| TeamRoundResult {
+        index,
+        team_name: Some(name.to_owned()),
+        team_number: Some(number),
+        team_role: Some(role),
+        team_outcome: Some(outcome),
+    };
+    let expected = [
+        RoundResult {
+            round_number: 0,
+            winning_team: Some("Red".to_owned()),
+            winning_team_role: Some(Attacker),
+            round_result: Some(Elimination),
+            winning_team_mode: Some(1),
+            team_results: Some(vec![
+                team(0, "Red", 2, Attacker, 1),
+                team(1, "Blue", 1, Defender, 2),
+            ]),
+        },
+        RoundResult {
+            round_number: 3,
+            winning_team: Some("Blue".to_owned()),
+            winning_team_role: Some(Defender),
+            round_result: Some(Defuse),
+            winning_team_mode: Some(1),
+            team_results: Some(vec![
+                team(0, "Blue", 1, Defender, 1),
+                team(1, "Red", 2, Attacker, 2),
+            ]),
+        },
+    ];
+    for ((digits, bits), want) in ROUND_RESULTS_CHINA_1309.into_iter().zip(expected) {
+        let data = hex_to_bytes(digits);
+        let mut r = BitReader::with_bit_len(&data, bits).unwrap();
+        let results = decode_round_results(&mut r, &bomb_game_state_china_1309()).unwrap();
+        assert_eq!(results, [want], "{digits}");
+        assert_eq!(r.bits_remaining(), 0);
+    }
+}
+
+/// A renamed member INSIDE the nested array fails by name and context rather
+/// than emitting a plausible team outcome.
+#[test]
+fn round_results_china_1309_renamed_nested_member_is_reported() {
+    let (digits, bits) = ROUND_RESULTS_CHINA_1309[0];
+    let data = hex_to_bytes(digits);
+    let mut declared = bomb_game_state_china_1309();
+    declared[88] = Some("UnexpectedTeamRole");
+    let mut r = BitReader::with_bit_len(&data, bits).unwrap();
+    let err = decode_round_results(&mut r, &declared).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            StructBlobError::UnsupportedMember {
+                handle: 88,
+                context: "TeamResults",
+                ..
+            }
+        ),
+        "expected UnsupportedMember for handle 88 in TeamResults, got {err:?}"
+    );
 }
 
 // -- TeamEconomy tests ----------------------------------------------------

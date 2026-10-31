@@ -11,15 +11,15 @@ external `oozextract` crate. Edition 2024, MSRV 1.86, MIT.
 ![license](https://img.shields.io/badge/license-MIT-blue.svg)
 ![rust](https://img.shields.io/badge/rust-1.86%2B-orange.svg)
 ![edition](https://img.shields.io/badge/edition-2024-orange.svg)
-![builds](https://img.shields.io/badge/builds-12.10--China_13.05-green.svg)
+![builds](https://img.shields.io/badge/builds-12.10--China_13.09-green.svg)
 ![unsafe](https://img.shields.io/badge/unsafe-none-success.svg)
 
 Derived from [ValorantReplayParser](https://github.com/michel-giehl/ValorantReplayParser)
 by Michel Giehl; see [`NOTICE.md`](NOTICE.md). Not affiliated with, endorsed
 by, or approved by Riot Games.
 
-**Current state:** `cargo +1.86.0 test --workspace --locked` **610 passing**,
-`tools/tests` **562 passing** -- see [Status](#status) for the rest.
+**Current state:** `cargo +1.86.0 test --workspace --locked` **617 passing**,
+`tools/tests` **565 passing** -- see [Status](#status) for the rest.
 
 - Run it: [`docs/USAGE.md`](docs/USAGE.md)
 - What's extractable: [`docs/DATA.md`](docs/DATA.md)
@@ -43,6 +43,8 @@ understood.
 
 | Build | Branch | Status | Verified by |
 |---|---|---|---|
+| **13.09 China** | `release-china-13.09` | ✅ Supported | Five preserved replays (three competitive, two Swiftplay): zero lost blocks, K/D and round results cross-checked |
+| **13.08 China** | `release-china-13.08` | ✅ Supported | Two preserved replays (one surrendered): zero lost blocks, K/D and round results cross-checked |
 | **13.05 China** | `release-china-13.05` | ✅ Supported | One preserved replay: 276,631/276,631 blocks + full export/checkpoint and semantic cross-check |
 | **13.04** | `release-13.04` | ✅ Supported | Upstream golden vectors + 108-replay full export/checkpoint sweep |
 | **13.04 China** | `release-china-13.04` | ✅ Supported | 285,488 blocks at 100% + full export/checkpoint and semantic cross-check |
@@ -102,7 +104,7 @@ is one `SeededTransform` impl (two constants + three word functions); see
 - **Reproducible** — Parquet output is byte-for-byte identical run to run.
 - **No `unsafe`** — `#![forbid(unsafe_code)]` in every crate; the only FFI is
   Oodle, isolated in an external crate.
-- **610 tests** plus a layered validation suite (framing / bytes / decode
+- **617 tests** plus a layered validation suite (framing / bytes / decode
   errors / semantics).
 
 ## Table of contents
@@ -315,8 +317,8 @@ it as one gives the year 3626.
 ## Status
 
 Work in progress. Currently verified: `cargo +1.86.0 test --workspace --locked`
-**610 passing**, strict workspace `clippy -D warnings` **0**, `cargo fmt` clean,
-and `check_ascii` on 122 files. The Python suite in `tools/tests` has 562 tests.
+**617 passing**, strict workspace `clippy -D warnings` **0**, `cargo fmt` clean,
+and `check_ascii` on 124 files. The Python suite in `tools/tests` has 565 tests.
 
 Re-measure per-crate counts with `cargo test -p <crate>`. Counts are omitted
 from the table below on purpose -- they go stale, and re-measuring is one line.
@@ -324,7 +326,7 @@ from the table below on purpose -- they go stale, and re-measuring is one line.
 | Layer | Crate | Feature flags |
 |---|---|---|
 | Bit reader / UE wire format | `vrf-bitio` | `alloc` (default; drop it for `no_std`) |
-| Payload transform (9 builds) | `vrf-transform` | none (`ALL_VERSIONS` is a length-independent slice) |
+| Payload transform (11 builds) | `vrf-transform` | none (`ALL_VERSIONS` is a length-independent slice) |
 | Container (info/header/chunk/event/checkpoint, Oodle) | `vrf-container` | `oodle` `event` `checkpoint` |
 | DemoFrame traversal | `vrf-frame` | none (sections are byte ranges for cursor alignment) |
 | Replay dynamic schema + GUID cache + checkpoint tables | `vrf-schema` | `checkpoint` |
@@ -707,8 +709,8 @@ reads only `archive.BitsRemaining`. Before this fix, all 364 rows of
 ## Supported builds and the cost of a new build
 
 The payload transform changes per game build, but far more is **constant**
-across the nine registered transforms from release-12.10 through
-release-china-13.05: the PRNG and its multipliers, the seed-mix skeleton, the
+across the eleven registered transforms from release-12.10 through
+release-china-13.09: the PRNG and its multipliers, the seed-mix skeleton, the
 64 -> 32 -> 8 -> tail staging, the tail-XOR handling, and even the S-box table
 itself. What actually changes per build:
 
@@ -723,8 +725,10 @@ itself. What actually changes per build:
 | release-13.04 | `0x076dc658` | `0x28` | - | unused |
 | release-china-13.04 | `0xe92064a1` | `0x5f` | - | unused |
 | release-china-13.05 | `0xf67761c9` | `0x37` | - | unused |
+| release-china-13.08 | `0x4a67f535` | `0x4b` | - | used |
+| release-china-13.09 | `0x350f7d3f` | `0x41` | - | used |
 
-In all nine builds the **tail-XOR byte equals the low byte of the seed
+In all eleven builds the **tail-XOR byte equals the low byte of the seed
 addend.** It is a derived value, not an independent constant, and the
 relationship is pinned by a test in `versions/mod.rs` -- if a future build breaks
 the pattern, the test fails instead of the final byte silently corrupting.
@@ -792,9 +796,9 @@ were zero. Independently encoded `characterDeath` events and final replicated
 scoreboards agreed for all ten players: 59 deaths, one self-kill, 58 credited
 kills, rounds 0..7, one side switch after round 3 and a 5-3 score.
 
-The machine-local corpora can rotate. The reproducible transform oracle is 99
+The machine-local corpora can rotate. The reproducible transform oracle is 121
 vectors: 66 mechanically extracted upstream vectors for the six global builds
-plus 33 independently implemented regional vectors, all at the same 11 staging
+plus 55 independently implemented regional vectors, all at the same 11 staging
 boundaries.
 
 The 768-byte S-box is shared across builds, which makes it usable as a
@@ -835,7 +839,7 @@ exactly but are not presented as ordinary fields.
 ### 2. Minimal cost per build update
 
 See [Supported builds](#supported-builds-and-the-cost-of-a-new-build). Across
-nine builds the only per-build variables are two constants (seed addend,
+eleven builds the only per-build variables are two constants (seed addend,
 offset) and a sign, plus whether the S-box stage is enabled; the PRNG,
 staging, tail-XOR, and S-box table are shared. A new build is one
 `SeededTransform` impl.

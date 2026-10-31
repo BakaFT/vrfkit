@@ -40,12 +40,17 @@
 //! use written down as a reading aid ONLY. Nothing matches on them:
 //!
 //! ## RoundResults (`BombGameState`)      13.01: 93..=96   13.02: 81..=84
+//! China 13.09 declares the members at 82..=93.
+//! - `WinningTeamMode` (enum byte, variable bit width, kept raw; China 13.09)
 //! - `WinningTeam` (FName)
 //! - `WinningTeamRole` (enum byte, variable bit width)
 //! - `RoundResult` (enum byte, variable bit width)
 //! - `EliminatedTeams` (skipped - opaque nested array). Declared at TWO
-//!   consecutive handles in both builds; matching on the name covers both
+//!   consecutive handles in every build; matching on the name covers both
 //!   without either being written down.
+//! - `TeamResults` (China 13.09): a nested array with the same framing whose
+//!   members are `TeamName` (FName), `TeamNumber` (Int32), `TeamRole` (enum
+//!   byte) and `TeamOutcome` (enum byte, kept raw).
 //!
 //! ## RoundInfos (`OwnerExclusivePlayerInfo`)   40..=44 in both builds
 //! - `RoundNumber`, `StartOfRoundMoney`, `StartOfRoundLoadoutValue`,
@@ -88,7 +93,9 @@ mod team_economy;
 mod tests;
 
 pub use round_infos::{PlayerRoundInfo, decode_round_infos};
-pub use round_results::{AresRoundOutcome, AresTeamRole, RoundResult, decode_round_results};
+pub use round_results::{
+    AresRoundOutcome, AresTeamRole, RoundResult, TeamRoundResult, decode_round_results,
+};
 pub use team_economy::{TeamEconomyUpdate, decode_team_economy};
 
 /// Errors that can occur while decoding a struct-array blob.

@@ -100,6 +100,23 @@ impl AresRoundOutcome {
     }
 }
 
+/// A sparse per-team outcome from a 13.09 `RoundResults.TeamResults` element.
+/// Names and handles are read from the replay; an absent field stays `None`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TeamRoundResult {
+    /// Zero-based index in `TeamResults` (not necessarily the numbered team).
+    pub index: u32,
+    /// The team's name, e.g. "Blue".
+    pub team_name: Option<String>,
+    /// The team's number.
+    pub team_number: Option<i32>,
+    /// The role the team played in the round.
+    pub team_role: Option<AresTeamRole>,
+    /// Raw enum byte. In the measured replays the round winner carries 1 and
+    /// the other team 2; no names are assigned to the values.
+    pub team_outcome: Option<u8>,
+}
+
 /// A single round result entry.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RoundResult {
@@ -111,6 +128,11 @@ pub struct RoundResult {
     pub winning_team_role: Option<AresTeamRole>,
     /// How the round ended. `None` if not present in this update.
     pub round_result: Option<AresRoundOutcome>,
+    /// Raw `WinningTeamMode` enum byte, declared from 13.09. Its names are
+    /// unknown, so the byte is kept rather than mapped. `None` if not present.
+    pub winning_team_mode: Option<u8>,
+    /// Per-team outcomes, declared from 13.09. `None` if not present.
+    pub team_results: Option<Vec<TeamRoundResult>>,
 }
 
 /// Decode a `BombGameState.RoundResults` blob.
@@ -119,7 +141,9 @@ pub struct RoundResult {
 ///
 /// Standard UE RepLayout dynamic-array framing (see module docs). Members are
 /// selected by the name the replay declares for each handle, because the
-/// numbers move between builds -- 93..=96 on 13.01, 81..=84 on 13.02.
+/// numbers move between builds -- 93..=96 on 13.01, 81..=84 on 13.02, 82..=93
+/// on China 13.09, where `WinningTeamMode` and the nested `TeamResults` array
+/// (members 86..=89) join them.
 ///
 /// # Arguments
 ///
@@ -144,6 +168,8 @@ pub fn decode_round_results(
         let mut winning_team: Option<String> = Option::None;
         let mut winning_team_role: Option<AresTeamRole> = Option::None;
         let mut round_result: Option<AresRoundOutcome> = Option::None;
+        let mut winning_team_mode: Option<u8> = Option::None;
+        let mut team_results: Option<Vec<TeamRoundResult>> = Option::None;
 
         for field_idx in 0..=MAX_FIELDS_PER_ELEMENT {
             let Some((handle, bit_count)) = read_field_header(reader)? else {
@@ -188,6 +214,13 @@ pub fn decode_round_results(
                         },
                     )?);
                 }
+                "WinningTeamMode" => {
+                    winning_team_mode = Some(read_narrow_byte(&mut sub, member, CONTEXT)?);
+                }
+                // A nested array with the same framing; its member names come
+                // from the same declaration, so a renamed member is an error
+                // rather than a plausible guess.
+                "TeamResults" => team_results = Some(decode_team_results(&mut sub, declared)?),
                 // Opaque nested array, skipped. Declared at two consecutive
                 // handles in both builds; one arm covers both because the
                 // match is on the name.
@@ -218,9 +251,78 @@ pub fn decode_round_results(
             winning_team,
             winning_team_role,
             round_result,
+            winning_team_mode,
+            team_results,
         });
     }
 
     ensure_consumed(reader)?;
     Ok(results)
+}
+
+/// Names `TeamResults` in error messages.
+const TEAM_CONTEXT: &str = "TeamResults";
+
+/// Decode a nested `TeamResults` array from its parent member's window.
+///
+/// Same bounded RepLayout framing as the enclosing array. Every handle must
+/// resolve through the replay's declared field table; no numeric handle is
+/// assumed. The window must be consumed exactly.
+fn decode_team_results(
+    reader: &mut BitReader<'_>,
+    declared: &[Option<&str>],
+) -> Result<Vec<TeamRoundResult>> {
+    let count = read_array_count(reader)?;
+    let mut teams = Vec::new();
+
+    while let Some(index) = read_element_index(reader, count)? {
+        let mut team = TeamRoundResult {
+            index,
+            ..TeamRoundResult::default()
+        };
+
+        for field_idx in 0..=MAX_FIELDS_PER_ELEMENT {
+            let Some((handle, bit_count)) = read_field_header(reader)? else {
+                break;
+            };
+            if field_idx == MAX_FIELDS_PER_ELEMENT {
+                return Err(StructBlobError::TooManyFields {
+                    context: TEAM_CONTEXT,
+                });
+            }
+
+            let mut sub = reader.sub_reader(u64::from(bit_count))?;
+            let member = member_name(declared, handle, TEAM_CONTEXT)?;
+            match member {
+                "TeamName" => team.team_name = Some(read_fname(&mut sub)?),
+                "TeamNumber" => team.team_number = Some(sub.read_i32()?),
+                "TeamRole" => {
+                    let v = read_narrow_byte(&mut sub, member, TEAM_CONTEXT)?;
+                    team.team_role = Some(AresTeamRole::from_byte(v).ok_or(
+                        StructBlobError::UnknownEnumValue {
+                            enum_name: "AresTeamRole",
+                            value: v,
+                            context: TEAM_CONTEXT,
+                        },
+                    )?);
+                }
+                "TeamOutcome" => {
+                    team.team_outcome = Some(read_narrow_byte(&mut sub, member, TEAM_CONTEXT)?);
+                }
+                name => {
+                    return Err(StructBlobError::UnsupportedMember {
+                        name: name.to_owned(),
+                        handle,
+                        context: TEAM_CONTEXT,
+                    });
+                }
+            }
+            ensure_member_consumed(&sub, member, handle, bit_count, TEAM_CONTEXT)?;
+        }
+
+        teams.push(team);
+    }
+
+    ensure_consumed(reader)?;
+    Ok(teams)
 }

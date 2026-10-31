@@ -480,7 +480,7 @@ Take only the layer you need. Every crate is `#![forbid(unsafe_code)]`, and
 | Layer | Crate | Feature flags |
 |---|---|---|
 | Bit reader / UE wire format | `vrf-bitio` | `alloc` (default; drop it for `no_std`) |
-| Payload transform (9 builds) | `vrf-transform` | none |
+| Payload transform (11 builds) | `vrf-transform` | none |
 | Container (info/header/chunk/event/checkpoint, Oodle) | `vrf-container` | `oodle` `event` `checkpoint` |
 | DemoFrame traversal | `vrf-frame` | none |
 | Dynamic schema + GUID cache + checkpoint tables | `vrf-schema` | `checkpoint` |
@@ -521,8 +521,8 @@ export validator or generated-table pipeline.
 | `apply_type_corrections.py` | Applies verified corrections/additions to that file and recomputes the two-line generation header |
 | `extract_checksum_types.py` | `crates/vrf-decode/src/checksum_table.rs` -- `compatible_checksum` -> `FieldType`, learned from the fields the overlay table already declares. Needs an export directory rather than the C# tree, since checksums come from the replay. Checksums whose donors disagree are dropped, which is the safety property. Repeat `--export` to widen the basis; the run **merges** into the committed table rather than replacing it, because a checksum this basis did not happen to see is still correct. `--check` asks whether the two agree *where they overlap* -- not whether they are byte-identical, which a content-addressed table cannot be across different sets of replays. |
 | `extract_sboxes.py` | `crates/vrf-transform/src/sbox.rs` |
-| `extract_golden.py` | `crates/vrf-transform/tests/data/golden_vectors.rs` -- lifts 66 vectors for the six global builds from the C# fixture and computes 33 vectors for the three China builds with `china_transform_oracle.py`. Regional fixture rows are discarded if present rather than trusted. |
-| `china_transform_oracle.py` | Not a generator on its own -- independent Python implementations of all three China transforms, imported by `extract_golden.py`. China 13.02 replaces fixture vectors from an implementation whose 32-bit and byte lanes were zeroing stubs; China 13.04 and 13.05 are absent from that fixture. These implementations catch porting differences but cannot independently prove a replay-recovered algorithm. |
+| `extract_golden.py` | `crates/vrf-transform/tests/data/golden_vectors.rs` -- lifts 66 vectors for the six global builds from the C# fixture and computes 55 vectors for the five China builds with `china_transform_oracle.py`. Regional fixture rows are discarded if present rather than trusted. |
+| `china_transform_oracle.py` | Not a generator on its own -- independent Python implementations of all five China transforms, imported by `extract_golden.py`. China 13.02 replaces fixture vectors from an implementation whose 32-bit and byte lanes were zeroing stubs; China 13.04, 13.05, 13.08 and 13.09 are absent from that fixture. These implementations catch porting differences but cannot independently prove a replay-recovered algorithm. |
 | `extract_equippables.py` | `tools/equippable_table.py` |
 
 **Order matters:** `extract_descriptors.py` -> `apply_type_corrections.py` ->
@@ -580,7 +580,7 @@ m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m); print(len(m
 | `compare_rpc_params.py` | RPC parameter comparison |
 | `compare_with_csharp.py` | Diff against the C# parser |
 | `check_effect_decoder.py` | Effect decoder (12 cases) |
-| `check_ascii.py` | Rust source ASCII sweep (122 files) |
+| `check_ascii.py` | Rust source ASCII sweep (124 files) |
 | `check_docs.py` | This document itself (below) |
 | `atomic_io.py` | Internal containment, recursive-removal and atomic-replacement helpers shared by mutating tools |
 
@@ -737,12 +737,12 @@ field meaning; the analyzer deliberately performs no type inference.
 ### Quick sweep -- after any change
 
 ```bash
-cargo +1.86.0 test --workspace --locked                              # 610 passing
+cargo +1.86.0 test --workspace --locked                              # 617 passing
 cargo +1.86.0 clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo +1.86.0 fmt --check
-python -W error tools/check_ascii.py --check                         # 122 files
+python -W error tools/check_ascii.py --check                         # 124 files
 python -W error tools/check_effect_decoder.py --check                # 12 cases
-python -W error -m unittest discover -s tools/tests -p "test_*.py"   # 562 passing
+python -W error -m unittest discover -s tools/tests -p "test_*.py"   # 565 passing
 python -W error tools/check_docs.py --fast
 python -W error tools/apply_type_corrections.py --check              # 133 corrections
 python -W error tools/extract_checksum_types.py --export tools/fixtures/checksum_export --check
@@ -831,6 +831,8 @@ silent change must be impossible.
 
 | Build | How it is verified |
 |---|---|
+| china-13.09 | Five preserved replays (three competitive, two Swiftplay) + independent Python oracle + full export/checkpoint and semantic cross-check |
+| china-13.08 | Two preserved replays + independent Python oracle + full export/checkpoint and semantic cross-check |
 | china-13.05 | One preserved replay + independent Python oracle + full export/checkpoint and semantic cross-check |
 | 12.10, 12.11, 13.00 | One preserved fixture each + golden vectors |
 | 13.01 | 215-replay portion of the current multi-build sweep |
@@ -840,7 +842,9 @@ silent change must be impossible.
 | china-13.04 | One preserved replay + independent Python oracle + full export/checkpoint and semantic cross-check |
 
 Only `++Ares-Core+release-china-13.05` is registered for 13.05. Global
-`++Ares-Core+release-13.05` is not supported by this entry.
+`++Ares-Core+release-13.05` is not supported by this entry. The same holds for
+13.08 and 13.09: only the exact `release-china-*` branches are registered, and
+the global `release-13.08` / `release-13.09` are not.
 
 The current machine-local multi-build sweep (2026-08-31) reports:
 
@@ -930,6 +934,43 @@ leaving 58 credited kills; every one of the ten players' final replicated K/D
 matched those events. Typed assists were present for nine players and visibly
 absent (`?`) for one. `roundStarted` and `switchTeams` gave rounds 0..7, one
 switch after round 3, and a final Red 5 / Blue 3 score.
+
+china-13.08 and china-13.09 measurements use seven preserved replays. Each
+file's own branch selected the transform; no forced override was used. Every
+run used `vrfkit validate` and `vrfkit export --out <dir> --checkpoints`:
+
+| Label | Branch | Bytes | SHA-256 (prefix) | Game state | ReplayData blocks | Checkpoints |
+|---|---|---:|---|---|---:|---:|
+| cn1308-a | china-13.08 | 55,962,499 | `942763f973c44ed9` | competitive | 735,382 | 22 |
+| cn1308-b | china-13.08 | 30,615,552 | `5bcd51e51414730c` | competitive, surrendered | 401,876 | 12 |
+| cn1309-a | china-13.09 | 20,551,030 | `cdfa35ccd7d3e1ed` | Swiftplay | 264,834 | 8 |
+| cn1309-b | china-13.09 | 15,604,784 | `c1d1f7e743ff4afc` | Swiftplay | 182,495 | 6 |
+| cn1309-c | china-13.09 | 67,457,294 | `1c901f72eb6e098b` | competitive | 808,264 | 22 |
+| cn1309-d | china-13.09 | 60,859,372 | `d0b8904dfb8a9f81` | competitive | 761,894 | 20 |
+| cn1309-e | china-13.09 | 58,776,517 | `0d8196eb0ca9cbdf` | competitive | 702,463 | 20 |
+
+All seven validated at 100% with zero malformed framing, transform failures,
+lost blocks, lost RPC payloads, unfinished partials or unread bytes. Overlay,
+struct, array-leaf, RPC-truncation and RPC-suffix error counters were zero;
+RepLayout tails and unresolved RPC payloads are preserved as raw rows (for
+example 365 tails and 4,714 RPC payloads on cn1309-c).
+
+The value cross-check used the same Event-versus-replicated-state method as
+13.05. In all seven, every player's final K/D matched the independently encoded
+`characterDeath` events (157, 80, 66, 44, 162, 163 and 152 events; self-kills
+0, 1, 0, 0, 2, 3 and 1). `RoundResults` gave 22, 19, 8, 6, 22, 20 and 20
+results against 22, 12, 8, 6, 22, 20 and 20 `roundStarted` events. cn1308-b is
+the exception by design: the losing team surrendered during round 12, and the
+eight remaining results carry `RoundResult = surrendered` at one timestamp.
+
+China 13.09 adds `WinningTeamMode` and a nested `TeamResults` array to
+`RoundResults`, in competitive and Swiftplay replays alike. Without the new
+decoder arms every 13.09 round blob failed by name (`unsupported member
+WinningTeamMode`). Across the five 13.09 replays, `WinningTeamMode` is 1 in all
+76 rounds, and every one of the 152 per-team rows agrees with the round winner:
+the team named `WinningTeam` has `TeamOutcome` 1 and the other team 2, and the
+winner's `TeamRole` equals `WinningTeamRole`. Both values are exported raw;
+what other values would mean is unmeasured.
 
 Adding a new build takes one `SeededTransform` impl -- two constants and three
 word functions. See the README's

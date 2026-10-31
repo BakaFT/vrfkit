@@ -358,6 +358,66 @@ impl ExportSink<'_> {
                     );
                 }
             }
+            if let Some(mode) = rr.winning_team_mode {
+                self.emit_struct_sub_field(
+                    |out| put(out, format_args!("RoundResults[{index}].WinningTeamMode")),
+                    Some(i64::from(mode)),
+                    None,
+                );
+            }
+            // Only observed nested members are emitted; an absent one gets no
+            // synthetic row. The parent's raw bits stay intact either way.
+            for team in rr.team_results.iter().flatten() {
+                let ti = team.index;
+                if let Some(ref name) = team.team_name {
+                    self.emit_struct_sub_field(
+                        |out| {
+                            put(
+                                out,
+                                format_args!("RoundResults[{index}].TeamResults[{ti}].TeamName"),
+                            )
+                        },
+                        None,
+                        Some(name.clone()),
+                    );
+                }
+                if let Some(number) = team.team_number {
+                    self.emit_struct_sub_field(
+                        |out| {
+                            put(
+                                out,
+                                format_args!("RoundResults[{index}].TeamResults[{ti}].TeamNumber"),
+                            )
+                        },
+                        Some(i64::from(number)),
+                        None,
+                    );
+                }
+                if let Some(role) = team.team_role {
+                    self.emit_struct_sub_field(
+                        |out| {
+                            put(
+                                out,
+                                format_args!("RoundResults[{index}].TeamResults[{ti}].TeamRole"),
+                            )
+                        },
+                        None,
+                        Some(role.as_str().to_owned()),
+                    );
+                }
+                if let Some(outcome) = team.team_outcome {
+                    self.emit_struct_sub_field(
+                        |out| {
+                            put(
+                                out,
+                                format_args!("RoundResults[{index}].TeamResults[{ti}].TeamOutcome"),
+                            )
+                        },
+                        Some(i64::from(outcome)),
+                        None,
+                    );
+                }
+            }
         }
 
         !results.is_empty()
