@@ -59,8 +59,11 @@ reason in `tools/fixtures/entry_survival_expected.json`, on a listed item that
 matches nothing (STALE), a checkpoint field joining no one group, a main-stream
 field without a name or checksum, and a Rust table that does not parse. Exit 2
 when there is nothing to judge: no export, no declarations, a build with no
-version, or fewer than two builds. A new build is judged against the builds
-before it, so export it into the same --root as they are.
+version, fewer than two builds, or mixed global and China builds. A new build
+is judged against earlier builds of the same region, so export them into one
+--root. China labels retain `china-` in reports and expected findings. Expected
+items from the other region are counted and excluded; same-region stale items
+still fail.
 
 Usage:
     python tools/check_entry_survival.py --root <exports-root> [--root ...]
@@ -112,7 +115,7 @@ KINDS = ("table", "handle", "scoped", "checksum", "route", "remap", "alias")
 #: field-missing.
 GROUP_ONLY = ("remap", "alias")
 
-BUILD_RE = re.compile(r"release-(\d+)\.(\d+)\Z")
+BUILD_RE = re.compile(r"release-(china-)?(\d+)\.(\d+)\Z")
 STR, unescape, is_fname_index = mirror.STR, mirror.unescape, mirror.is_fname_index
 #: A Rust table did not parse completely: fail rather than check fewer.
 EntryParseError = mirror.ParseError
@@ -461,12 +464,13 @@ def build_version(build: str) -> tuple[int, int]:
     m = BUILD_RE.search(build)
     if m is None:
         raise InputError(f"build {build!r} carries no release-MM.mm version to order it by")
-    return int(m.group(1)), int(m.group(2))
+    return int(m.group(2)), int(m.group(3))
 
 
 def short(build: str) -> str:
     major, minor = build_version(build)
-    return f"{major}.{minor:02d}"
+    region = BUILD_RE.search(build).group(1) or ""
+    return f"{region}{major}.{minor:02d}"
 
 
 @dataclass
@@ -502,6 +506,8 @@ def tally(replays: list[Replay], catalog: Catalog, overlay: Overlay) -> Tally:
     for r in replays:
         by_build[r.build].append(r)
     versions = {b: build_version(b) for b in by_build}
+    if len({short(b).startswith("china-") for b in by_build}) > 1:
+        raise InputError("mixed global and China builds; audit each region separately")
     if len(set(versions.values())) != len(versions):
         raise InputError("two build strings carry the same version; cannot order them")
     builds = sorted(by_build, key=versions.get)
@@ -858,6 +864,9 @@ def load_expected(path: Path) -> list[dict]:
             raise ValueError(f"{path}: item {i} must have exactly {sorted(EXPECTED_KEYS)}")
         if item["finding"] not in ("field-missing", "moved"):
             raise ValueError(f"{path}: item {i}: finding must be field-missing or moved")
+        if not isinstance(item["build"], str) or re.fullmatch(
+                r"(?:china-)?\d+\.\d\d", item["build"]) is None:
+            raise ValueError(f"{path}: item {i}: build must be MM.mm or china-MM.mm")
         for k in ("reason", "evidence"):
             if not isinstance(item[k], str) or not item[k].strip():
                 raise ValueError(f"{path}: item {i} has no {k}")
@@ -1067,7 +1076,9 @@ def run(replays: list[Replay], catalog: Catalog, expected: list[dict], stats: Lo
               f"between builds, so nothing was judged", file=sys.stderr)
         return 2
     judgement = judge(t, catalog, overlay)
-    stale = apply_expected(judgement.findings, expected)
+    china = short(t.builds[0]).startswith("china-")
+    regional_expected = [item for item in expected if item["build"].startswith("china-") == china]
+    stale = apply_expected(judgement.findings, regional_expected)
 
     kinds = catalog.by_kind()
     print(f"entry survival: {stats.exports} export(s), {len(t.builds)} builds; "
@@ -1083,6 +1094,8 @@ def run(replays: list[Replay], catalog: Catalog, expected: list[dict], stats: Lo
           f"{stats.path_index_mismatches} path-index mismatch(es), "
           f"{stats.repeated_checkpoint_groups} repeated group key(s)")
     print(f"skipped generated directories: {len(stats.skipped)}")
+    if len(regional_expected) != len(expected):
+        print(f"expected findings from the other region excluded: {len(expected) - len(regional_expected)}")
     for s in stats.skipped:
         print(f"  {s}")
     print()

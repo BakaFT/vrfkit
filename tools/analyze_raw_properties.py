@@ -43,7 +43,7 @@ import corpus_scan
 CLASS_NET_CACHE_SUFFIX = "_ClassNetCache"
 #: A run without --build samples the newest this many builds found.
 DEFAULT_BUILD_COUNT = 3
-BUILD_PATTERN = re.compile(r"(?:release-)(\d+\.\d+)")
+BUILD_PATTERN = re.compile(r"(?:release-)((?:china-)?\d+\.\d+)(?=\s|$)")
 FIELD_COLUMNS = (
     "packet_id",
     "channel_index",
@@ -155,8 +155,10 @@ def parse_build(text: str) -> str | None:
 
 
 def newest_builds(labels: Iterable[str], count: int = DEFAULT_BUILD_COUNT) -> tuple[str, ...]:
-    """The `count` highest release labels, oldest first, compared as numbers."""
-    return tuple(sorted(set(labels), key=lambda label: tuple(map(int, label.split("."))))[-count:])
+    """Highest numeric releases, retaining the region as a deterministic tie-breaker."""
+    return tuple(sorted(set(labels), key=lambda label: (
+        *map(int, label.removeprefix("china-").split(".")), label,
+    ))[-count:])
 
 
 def inspect_build(vrfkit: Path, replay: Path) -> str | None:
@@ -592,7 +594,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--build",
         action="append",
         dest="builds",
-        help=f"release label to include; repeatable (default: the newest {DEFAULT_BUILD_COUNT} builds found)",
+        help=f"release label, e.g. 13.09 or china-13.09; repeatable (default: the newest {DEFAULT_BUILD_COUNT} builds found)",
     )
     parser.add_argument("--recursive", action="store_true")
     selection = parser.add_mutually_exclusive_group()
@@ -616,8 +618,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.limit_per_build is not None and args.limit_per_build < 1:
         parser.error("--limit-per-build must be at least 1")
-    if any(re.fullmatch(r"\d+\.\d+", build) is None for build in args.builds or ()):
-        parser.error("--build must be a numeric release label such as 13.04")
+    if any(re.fullmatch(r"(?:china-)?\d+\.\d+", build) is None for build in args.builds or ()):
+        parser.error("--build must be a release label such as 13.04 or china-13.04")
     return args
 
 

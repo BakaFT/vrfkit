@@ -7,6 +7,7 @@ import unittest
 from collections import Counter
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -65,12 +66,52 @@ def row(
 
 
 class AnalyzeExportTests(TempDirTestCase):
-    def _write_export(self, root: Path, rows: list[dict]) -> None:
+    def _write_export(self, root: Path, rows: list[dict], build="13.04") -> None:
         (root / "manifest.json").write_text(
-            json.dumps({"replay_build": "++Ares-Core+release-13.04"}),
+            json.dumps({"replay_build": f"++Ares-Core+release-{build}"}),
             encoding="utf-8",
         )
         pq.write_table(pa.Table.from_pylist(rows, schema=SCHEMA), root / "fields.parquet")
+
+    def test_same_numbered_regions_keep_separate_inventory_counts(self):
+        inventory = raw_inventory.Inventory()
+        for ordinal, build in enumerate(("13.09", "china-13.09"), 1):
+            root = self.tmp()
+            rows = [row(packet=i, group="/G", handle=1, name=None, bits=8, raw=b"\x05")
+                    for i in range(ordinal)]
+            self._write_export(root, rows, build)
+            self.assertEqual(raw_inventory.analyze_export(root, inventory, ordinal), build)
+        self.assertEqual(inventory.unnamed_rows, Counter({"13.09": 1, "china-13.09": 2}))
+        document = raw_inventory.summary_document(
+            inventory, eligible_by_build=Counter({"13.09": 1, "china-13.09": 1}),
+            selected_by_build=Counter({"13.09": 1, "china-13.09": 1}), excluded=0, recursive=False)
+        self.assertEqual(set(document["builds"]), {"13.09", "china-13.09"})
+
+    def test_cli_selects_china_without_selecting_same_numbered_global_replay(self):
+        root = self.tmp()
+        exe = root / "vrfkit.exe"
+        exe.touch()
+        corpus = root / "corpus"
+        corpus.mkdir()
+        for build in ("13.09", "china-13.09"):
+            (corpus / f"{build}.vrf").touch()
+        exported = []
+
+        def export(exe, candidate, inventory, ordinal):
+            exported.append(candidate.build)
+            directory = self.tmp()
+            self._write_export(directory, [row(packet=1, group="/G", handle=1,
+                               name=None, bits=8, raw=b"\x05")], candidate.build)
+            raw_inventory.analyze_export(directory, inventory, ordinal)
+
+        output = io.StringIO()
+        with patch.object(raw_inventory, "inspect_build", side_effect=lambda exe, p: p.stem), \
+                patch.object(raw_inventory, "export_and_analyze", side_effect=export), \
+                redirect_stdout(output):
+            code = raw_inventory.main([str(exe), str(corpus), "--build", "china-13.09", "--format", "json"])
+        self.assertEqual(code, 0)
+        self.assertEqual(exported, ["china-13.09"])
+        self.assertEqual(set(json.loads(output.getvalue())["builds"]), {"china-13.09"})
 
     def test_counts_only_unnamed_replicated_properties(self):
         rows = [
@@ -353,6 +394,23 @@ class BuildTests(unittest.TestCase):
     def test_parse_build_ignores_other_version_numbers(self):
         text = "Replay version: 5.3.2\nBranch: ++Ares-Core+release-13.04"
         self.assertEqual(raw_inventory.parse_build(text), "13.04")
+
+    def test_china_build_labels_are_complete_and_preserve_the_region(self):
+        for label in ("13.08", "13.09", "china-13.08", "china-13.09"):
+            with self.subTest(label=label):
+                self.assertEqual(raw_inventory.parse_build(f"Branch: ++Ares-Core+release-{label}\n"), label)
+                self.assertEqual(raw_inventory.parse_args(["exe", "corpus", "--build", label]).builds, [label])
+        for label in ("china-13.09-suffix", "13.09.1", "china-13.09secret", "test-13.09"):
+            with self.subTest(label=label):
+                self.assertIsNone(raw_inventory.parse_build(f"++Ares-Core+release-{label}"))
+                with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                    raw_inventory.parse_args(["exe", "corpus", "--build", label])
+
+    def test_newest_builds_keep_regions_distinct_and_compare_versions_numerically(self):
+        labels = ["china-13.2", "china-13.10", "13.10", "china-13.09", "china-13.10"]
+        self.assertEqual(raw_inventory.newest_builds(labels), ("china-13.09", "13.10", "china-13.10"))
+        self.assertEqual(raw_inventory.newest_builds(reversed(labels)),
+                         ("china-13.09", "13.10", "china-13.10"))
 
     def test_parse_build_requires_release_label(self):
         self.assertIsNone(raw_inventory.parse_build("Replay version: 5.3.2"))

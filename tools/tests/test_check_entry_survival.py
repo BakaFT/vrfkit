@@ -242,6 +242,11 @@ class ExpectedListTests(TempDirTestCase):
         self.assertEqual(code, 0, err)
         self.assertIn("expected", out)
         self.assertIn("renamed to bArmedV2", out)
+        code, out, err = run(*self.scenario(), expected=[
+            dict(self.ITEM), dict(self.ITEM, build="china-13.02"),
+        ])
+        self.assertEqual(code, 0, err)
+        self.assertIn("expected findings from the other region excluded: 1", out)
 
     def test_a_listed_item_matching_nothing_is_stale(self):
         cat = catalog(table(STATE, "bArmed"))
@@ -259,6 +264,20 @@ class ExpectedListTests(TempDirTestCase):
         with self.assertRaises(ValueError):
             guard.load_expected(path)
 
+    def test_expected_builds_preserve_region_and_reject_noncanonical_labels(self):
+        path = self.tmp() / "expected.json"
+        for build in ("13.02", "china-13.02"):
+            with self.subTest(build=build):
+                item = dict(self.ITEM, build=build)
+                path.write_text(json.dumps({"expected": [item]}), encoding="utf-8")
+                self.assertEqual(guard.load_expected(path), [item])
+        for build in (None, 13.02, "china-13.2", "china-13.02-extra", "other-13.02"):
+            with self.subTest(build=build):
+                path.write_text(json.dumps({"expected": [dict(self.ITEM, build=build)]}),
+                                encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "build must be"):
+                    guard.load_expected(path)
+
     def test_every_committed_item_names_a_real_entry(self):
         """An item whose entry the tables no longer hold can never match, so
         it would read STALE on every corpus rather than say why."""
@@ -270,6 +289,41 @@ class ExpectedListTests(TempDirTestCase):
 
 
 class ReportTests(unittest.TestCase):
+    def test_china_builds_are_ordered_numerically_and_reported_with_their_region(self):
+        cat = catalog(table(STATE, "bArmed"))
+        reps = (many("china-13.10", 20, {STATE: [("bArmed", 11, 3)]})
+                + many("china-13.2", 20, {STATE: [("bArmed", 11, 3)]}))
+        tally, judgement = judge(reps, cat)
+        report = guard.to_json(tally, cat, judgement, [])
+        self.assertEqual([b["build"] for b in report["builds"]], ["china-13.02", "china-13.10"])
+        self.assertEqual(report["builds"][1]["reference"], ["china-13.02"])
+        self.assertEqual(report["builds"][1]["states"]["survived"], 1)
+        self.assertEqual(run(reps, cat)[0], 0)
+
+    def test_mixed_regions_cannot_form_a_reference_window(self):
+        cat = catalog(table(STATE, "bArmed"))
+        for global_build in ("13.08", "13.09"):
+            with self.subTest(global_build=global_build):
+                reps = [replay(global_build, {}), replay("china-13.09", {})]
+                with self.assertRaisesRegex(guard.InputError, "audit each region separately"):
+                    judge(reps, cat)
+
+    def test_china_loss_needs_a_china_exception_and_stale_china_items_still_fail(self):
+        entry = table(STATE, "bArmed")
+        cat = catalog(entry)
+        reps = (many("china-13.08", 20, {STATE: [("bArmed", 11, 3)]})
+                + many("china-13.09", 20, {STATE: [("Other", 12, 4)]}))
+        item = {"entry": entry.key, "build": "13.09", "finding": "field-missing",
+                "reason": "fixture", "evidence": "fixture"}
+        code, out, err = run(reps, cat, [item])
+        self.assertEqual(code, 1)
+        self.assertIn("expected findings from the other region excluded: 1", out)
+        self.assertNotIn("STALE", err)
+        self.assertEqual(run(reps, cat, [{**item, "build": "china-13.09"}])[0], 0)
+        code, _, err = run(reps, cat, [{**item, "build": "china-13.08"}])
+        self.assertEqual(code, 1)
+        self.assertIn("STALE", err)
+
     def test_zeros_are_printed(self):
         """A clean run still prints every counter: a line that appears only
         when non-zero cannot tell "nothing wrong" from "never ran"."""
@@ -311,6 +365,9 @@ class ReportTests(unittest.TestCase):
         reps = [guard.Replay("x", "++Ares-Core+dev", frozenset(), frozenset())]
         with self.assertRaises(guard.InputError):
             judge(reps, cat)
+        for label in ("china-13.09-suffix", "china-13.09.1", "other-13.09"):
+            with self.subTest(label=label), self.assertRaises(guard.InputError):
+                judge([replay(label, {})], cat)
 
 
 class ResolutionTests(unittest.TestCase):
@@ -441,6 +498,22 @@ def write_export(directory: Path, build: str, main: dict, checkpoint=None):
 
 
 class LoadTests(TempDirTestCase):
+    def test_main_accepts_china_exports_with_global_expected_items_scoped_out(self):
+        root = self.tmp()
+        for label in ("china-13.08", "china-13.09"):
+            write_export(root / label, label, {STATE: [("Other", 12, 4)]})
+        report = root / "report.json"
+        code, out, err = run_cli(lambda _: guard.main(["--root", str(root), "--json", str(report)]))
+        self.assertEqual(code, 0, out + err)
+        data = json.loads(report.read_text(encoding="utf-8"))
+        self.assertEqual([b["build"] for b in data["builds"]], ["china-13.08", "china-13.09"])
+        self.assertEqual(data["builds"][1]["reference"], ["china-13.08"])
+        self.assertEqual(data["stale_expected"], [])
+        write_export(root / "global", "13.09", {STATE: [("Other", 12, 4)]})
+        code, _, err = run_cli(lambda _: guard.main(["--root", str(root)]))
+        self.assertEqual(code, 2)
+        self.assertIn("audit each region separately", err)
+
     def test_a_checkpoint_only_declaration_counts_and_joins_on_the_ordinal(self):
         new = "/Game/New.New_C"
         tmp = self.tmp()

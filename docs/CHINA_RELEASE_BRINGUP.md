@@ -102,6 +102,15 @@ The command never edits the replay or exports results under a guessed transform.
    source hashes and previously supported branches, then run the full sweep
    in [CONTRIBUTING](../CONTRIBUTING.md).
 
+For the supporting analysis tools, select `--build china-13.08 --build
+china-13.09` in `tools/analyze_raw_properties.py`. Run
+`tools/check_entry_survival.py` on a root containing only China exports from
+at least two versions. It compares each version with earlier China versions;
+global exports cannot be used as its reference window. See the
+[raw-property inventory](USAGE.md#5-tools-reference) and
+[entry-survival check](USAGE.md#checking-a-new-build-still-matches-every-entry)
+for selection, expected findings and sample-size limits.
+
 The upstream 13.09 round decoder handles `WinningTeamMode` as a raw byte and
 `TeamResults` by declared member names. There is no regional skip arm.
 The measured 13.09 replays have mode 1; its enum name is not asserted.
