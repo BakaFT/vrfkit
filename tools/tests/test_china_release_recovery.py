@@ -76,6 +76,61 @@ class ChinaReleaseRecoveryTests(unittest.TestCase):
         self.assertEqual(candidate["subtract_offset"], 0x37)
         self.assertEqual(candidate["tail_xor"], 0xC9)
 
+    def test_china_1308_committed_evidence_recovers_every_unknown(self):
+        evidence = recover.load_evidence(
+            recover.REPO / "tools/china_release/evidence/china_13_08.json"
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            sequence = recover.recover_word64(evidence)
+            complements = recover.recover_short_lanes(evidence, sequence)
+            candidate = recover.recover_prng(evidence, sequence, complements)
+
+        self.assertEqual(
+            recover.sequence_names(sequence),
+            ("NOT", "SWAP", "ADD5", "SUB7", "SBOX", "XORNOT3"),
+        )
+        self.assertEqual(complements, (True,))
+        self.assertEqual(candidate["state"], 0x9015_342A)
+        self.assertEqual(candidate["seed_addend"], 0x4A67_F535)
+        self.assertEqual(candidate["subtract_offset"], 0x4B)
+        self.assertEqual(candidate["tail_xor"], 0x35)
+
+    def test_china_1309_committed_evidence_recovers_every_unknown(self):
+        evidence = recover.load_evidence(
+            recover.REPO / "tools/china_release/evidence/china_13_09.json"
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            sequence = recover.recover_word64(evidence)
+            complements = recover.recover_short_lanes(evidence, sequence)
+            candidate = recover.recover_prng(evidence, sequence, complements)
+
+        self.assertEqual(
+            recover.sequence_names(sequence),
+            ("NOT", "SUB6", "REV", "ADD4", "REV", "SBOX"),
+        )
+        self.assertEqual(complements, ())
+        self.assertEqual(candidate["state"], 0xA2DB_49A9)
+        self.assertEqual(candidate["seed_addend"], 0x350F_7D3F)
+        self.assertEqual(candidate["subtract_offset"], 0x41)
+        self.assertEqual(candidate["tail_xor"], 0x3F)
+
+    def test_china_1309_shortest_length_has_a_second_family_the_short_lanes_reject(self):
+        # Four 64-bit words alone leave two inequivalent families at length six.
+        evidence = recover.load_evidence(
+            recover.REPO / "tools/china_release/evidence/china_13_09.json"
+        )
+        sbox = recover.load_sbox(recover.REPO / evidence["word64"]["sbox_path"])
+        with contextlib.redirect_stdout(io.StringIO()):
+            matches = recover.search_word64_representatives(
+                evidence["word64"]["vectors"], 6, sbox
+            )
+        families = {recover.sequence_names(match) for match in matches}
+        self.assertIn(("NOT", "REV", "ADD4", "REV", "SUB6", "SBOX"), families)
+        rejected = recover.sequence_operations(["NOT", "REV", "ADD4", "REV", "SUB6", "SBOX"])
+        with contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(recover.RecoveryError):
+                recover.recover_short_lanes(evidence, rejected)
+
     def test_a_wrong_second_word64_vector_is_rejected(self):
         evidence = copy.deepcopy(self.evidence)
         evidence["word64"]["vectors"][1]["plain_le"] = "110ca261300f8120"

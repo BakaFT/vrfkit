@@ -1,0 +1,281 @@
+{
+  "schema_version": 1,
+  "branch": "++Ares-Core+release-china-13.08",
+  "replay": {
+    "label": "team-cn1308",
+    "size_bytes": 55962499,
+    "sha256": "942763f973c44ed991841d6f1cab4f43bb8ce4c90f629e162c605d4bc361b4b4",
+    "network_version": 19,
+    "engine_network_protocol_version": 32
+  },
+  "word64": {
+    "sbox_path": "crates/vrf-transform/src/sbox.rs",
+    "max_sequence_length": 6,
+    "calibration": {
+      "label": "china-13.02 DefaultCeremony",
+      "bit_count": 64,
+      "actor_net_guid": 312,
+      "state": 376,
+      "cipher_le": "8829915d3e82dbab",
+      "plain_le": "100ca261300f8100",
+      "expected_sequence": [
+        "ROL7",
+        "ROR8",
+        "SBOX",
+        "SWAP",
+        "REV",
+        "ADD1"
+      ]
+    },
+    "vectors": [
+      {
+        "state": 602,
+        "cipher_le": "de8ed608e3730dce",
+        "plain_le": "100ca261300f8100",
+        "label": "DefaultCeremony"
+      },
+      {
+        "state": 92,
+        "cipher_le": "7e8ef5396760a8e1",
+        "plain_le": "100c820141a06130",
+        "label": "BaseReplayPlayerState"
+      },
+      {
+        "state": 2000,
+        "cipher_le": "a18ed638e1814fce",
+        "plain_le": "100ca26130102000",
+        "label": "AresWorldSettings"
+      },
+      {
+        "state": 285,
+        "cipher_le": "b08e621ee373df82",
+        "plain_le": "100ca461300f0804",
+        "label": "BaseReplayController"
+      }
+    ],
+    "expected_sequence": [
+      "NOT",
+      "SWAP",
+      "ADD5",
+      "SUB7",
+      "SBOX",
+      "XORNOT3"
+    ]
+  },
+  "short_lanes": {
+    "word32": [
+      {
+        "state": 297,
+        "cipher_le": "ad79e698",
+        "plain_le": "100ca261",
+        "seed": 297,
+        "later_cipher": 163
+      },
+      {
+        "state": 295,
+        "cipher_le": "327be698",
+        "plain_le": "100ca261",
+        "seed": 295,
+        "later_cipher": 102
+      },
+      {
+        "state": 575,
+        "cipher_le": "91e1e698",
+        "plain_le": "100ca261",
+        "seed": 575,
+        "later_cipher": 235
+      },
+      {
+        "state": 573,
+        "cipher_le": "c2e3e698",
+        "plain_le": "100ca261",
+        "seed": 573,
+        "later_cipher": 91
+      },
+      {
+        "state": 567,
+        "cipher_le": "07e9e698",
+        "plain_le": "100ca261",
+        "seed": 567,
+        "later_cipher": 171
+      },
+      {
+        "state": 565,
+        "cipher_le": "96e9e698",
+        "plain_le": "100ca261",
+        "seed": 565,
+        "later_cipher": 7
+      },
+      {
+        "state": 515,
+        "cipher_le": "30b9e698",
+        "plain_le": "100ca261",
+        "seed": 515,
+        "later_cipher": 156
+      }
+    ],
+    "byte": [
+      {
+        "state": 257,
+        "cipher": "0x78",
+        "plain": "0x00"
+      },
+      {
+        "state": 529,
+        "cipher": "0xd8",
+        "plain": "0x00"
+      },
+      {
+        "state": 531,
+        "cipher": "0x8a",
+        "plain": "0x00"
+      },
+      {
+        "state": 539,
+        "cipher": "0x42",
+        "plain": "0x00"
+      },
+      {
+        "state": 549,
+        "cipher": "0x19",
+        "plain": "0x00"
+      },
+      {
+        "state": 271,
+        "cipher": "0x6e",
+        "plain": "0x00"
+      },
+      {
+        "state": 537,
+        "cipher": "0x31",
+        "plain": "0x00"
+      }
+    ],
+    "expected_xor_complement_toggles": [
+      true
+    ]
+  },
+  "prng": {
+    "seed": 4387,
+    "state_candidates": [
+      {
+        "identity": "TimedBomb initial zero word",
+        "state": 2417308714
+      }
+    ],
+    "state1_word32": [
+      {
+        "seed": 4387,
+        "cipher_le": "7434d986",
+        "plain_le": "00000000"
+      },
+      {
+        "seed": 6513,
+        "cipher_le": "69006bda",
+        "plain_le": "00000000"
+      },
+      {
+        "seed": 8185,
+        "cipher_le": "98d24dda",
+        "plain_le": "00000000"
+      },
+      {
+        "seed": 10029,
+        "cipher_le": "b81c2cb2",
+        "plain_le": "00000000"
+      },
+      {
+        "seed": 11993,
+        "cipher_le": "323467b9",
+        "plain_le": "00000000"
+      },
+      {
+        "seed": 13465,
+        "cipher_le": "2619778d",
+        "plain_le": "00000000"
+      },
+      {
+        "seed": 15165,
+        "cipher_le": "6e289f75",
+        "plain_le": "00000000"
+      },
+      {
+        "seed": 16957,
+        "cipher_le": "7013d1e4",
+        "plain_le": "00000000"
+      },
+      {
+        "seed": 19187,
+        "cipher_le": "a82f50e6",
+        "plain_le": "00000000"
+      },
+      {
+        "seed": 22569,
+        "cipher_le": "1a8f2140",
+        "plain_le": "00000000"
+      },
+      {
+        "seed": 28891,
+        "cipher_le": "5aedf673",
+        "plain_le": "00000000"
+      },
+      {
+        "seed": 32627,
+        "cipher_le": "da1ed66d",
+        "plain_le": "00000000"
+      }
+    ],
+    "state1_byte": [
+      {
+        "seed": 297,
+        "cipher": 163,
+        "plain": 48
+      },
+      {
+        "seed": 295,
+        "cipher": 102,
+        "plain": 48
+      },
+      {
+        "seed": 575,
+        "cipher": 235,
+        "plain": 48
+      },
+      {
+        "seed": 573,
+        "cipher": 91,
+        "plain": 48
+      },
+      {
+        "seed": 567,
+        "cipher": 171,
+        "plain": 48
+      },
+      {
+        "seed": 565,
+        "cipher": 7,
+        "plain": 48
+      },
+      {
+        "seed": 515,
+        "cipher": 156,
+        "plain": 48
+      }
+    ],
+    "mixed_a_solutions": {
+      "0x9015342a": [
+        "0x486ab9fb",
+        "0xfa6ca0d1"
+      ]
+    },
+    "expected": {
+      "identity": "TimedBomb initial zero word",
+      "state": 2417308714,
+      "seed_addend": 1248326965,
+      "q_at_anchor": 88,
+      "subtract_offset": 75,
+      "equivalent_add_offset": 53,
+      "tail_xor": 53
+    }
+  }
+}

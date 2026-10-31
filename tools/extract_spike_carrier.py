@@ -1,50 +1,25 @@
 #!/usr/bin/env python3
 """Derive a spike (bomb) custody timeline from an export.
 
-Who was holding the spike, and when. The answer lives on the spike's own actor
-channel: `BombEquippable_C.Owner` is re-replicated every time custody changes,
-so a round reads as a sequence of owner intervals -- ground pickup, player,
-dropped projectile, ground pickup, next player, and so on. This script pairs
-consecutive `Owner` writes into intervals, resolves each owner NetGUID to a
-class, and joins players through to their manifest `subject`.
+`BombEquippable_C.Owner` is re-replicated on every custody change, so a round
+reads as a sequence of owner intervals (ground pickup, player, dropped
+projectile, ...). This pairs consecutive `Owner` writes into intervals,
+resolves each owner NetGUID to a class and joins players to their manifest
+`subject`, from fields.parquet, actors.parquet and manifest.json alone. The
+export must type `Owner`/`Instigator` (value_i64); older ones do not.
 
-This is a *derived* view over the raw export, not a new wire decode: every
-value comes out of `fields.parquet` / `actors.parquet` / `manifest.json`.
-vrfkit itself exports raw tables; analytical joins live here so the parser
-stays focused.
+A player is every pawn a `SpawnedCharacter` value names (player_identity.py),
+including one from before a reconnect; `carrier_identity_provenance` says which.
 
-Three signals overlap; `Owner` is the one used, the others qualify it:
+`Owner` is custody (in the backpack too); `AresInventory.NewCurrentEquippable`
+sets `in_hand`. The pickup RPC `MulticastPlayBombPickedUpAudio` always agrees
+with `Owner` and is not read.
 
-  Owner                  the custody signal. A superset of the other two --
-                         it covers "carrying it in the backpack", not just
-                         "holding it".
-  NewCharacter           `MulticastPlayBombPickedUpAudio`, fires only on a
-                         pickup and always agrees with the `Owner` written in
-                         the same tick. Not read here; it is the cross-check
-                         that established `Owner`.
-  NewCurrentEquippable   the `AresInventory` side, i.e. the spike is actually
-                         *in hand*. Kept as the `in_hand` flag.
-
-`Owner` is not always a player. VALORANT hands the spike to whatever actor is
-physically holding it, which includes:
-
-  EquippableGroundPickup_C     -- lying on the floor (round start, or dropped)
-  EquippablePickupProjectile_C -- mid-air, between a drop and its landing
-  Pawn_Aggrobot_SeekerNade_C   -- Gekko's Wingman, which really does carry and
-                                  plant the spike
-
-Rather than allowlisting proxy classes, an owner that is not a manifest
-character is asked for its own `Instigator` -- Wingman's is the Gekko player --
-and that is reported as `carrier_pawn_guid` with `via_proxy_class` set.
-
-NetGUID note: `Owner` used to arrive untyped on this group, so an earlier
-version of this script unpacked `SerializeIntPacked` out of `raw_bits` by hand.
-The overlay now resolves `Owner`/`Instigator`/`AttachParent`/`Controller` by
-name for any group, so `value_i64` is populated and that decoder is gone. An
-export written before that change will not work here.
-
-Usage:
-    python tools/extract_spike_carrier.py --export <out_dir> --out spike_carrier.parquet
+An EquippableGroundPickup_C (on the floor) or EquippablePickupProjectile_C
+(mid-air after a drop) owner means loose. Any other non-player owner, such as
+Gekko's Wingman (Pawn_Aggrobot_SeekerNade_C, which really carries and plants
+it), is asked for its own `Instigator`, with no allowlist, and reported as
+`carrier_pawn_guid` with `via_proxy_class`; otherwise it stays `unknown`.
 """
 
 from __future__ import annotations
@@ -57,17 +32,25 @@ from collections import Counter
 from pathlib import Path
 
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
+
+from atomic_io import atomic_write_file, refuse_input_path
+from player_identity import EARLIER_PROVENANCE, load_player_bodies
+from wire_bits import read_parquet
 
 BOMB_CLASS = "BombEquippable.BombEquippable_C"
 
 #: Holder kinds that mean somebody is actually carrying the spike.
 HELD_KINDS = ("player", "proxy")
 
-#: Owner classes that mean "nobody is carrying it". GroundPickup is the actor
-#: the spike lives inside while it sits on the floor; PickupProjectile is the
-#: short arc between a drop and the landing. Both are matched on the leaf name.
+#: Owner classes that mean nobody carries it, matched on the leaf name.
 LOOSE_CLASSES = ("EquippableGroundPickup_C", "EquippablePickupProjectile_C")
+
+#: The only field rows `build()` reads: the proxy `Instigator` walk, the
+#: `Owner` custody log and the AresInventory in-hand writes.
+FIELD_NAMES = ("Instigator", "Owner", "CurrentEquippable", "NewCurrentEquippable")
+FIELD_COLUMNS = ("time_ms", "packet_id", "actor_net_guid", "group_path", "field_name", "value_i64")
 
 
 def leaf(class_path: str | None) -> str:
@@ -77,14 +60,8 @@ def leaf(class_path: str | None) -> str:
 
 def classify_owner(owner: int, owner_class: str | None,
                    pawn_subject: dict, instigator: dict):
-    """Who, if anyone, is carrying the spike for this `Owner` value.
-
-    Returns `(kind, carrier_pawn_guid, via_proxy_class)`. A manifest character
-    is the carrier itself; a ground pickup or drop projectile means nobody has
-    it; anything else is asked for its own `Instigator`, which walks a proxy
-    such as Gekko's Wingman back to the player that spawned it. An owner that
-    is none of those stays `unknown` rather than being guessed at.
-    """
+    """`(kind, carrier_pawn_guid, via_proxy_class)` for one `Owner` value, by
+    the rules in the module docstring; anything else stays `unknown`."""
     if owner in pawn_subject:
         return "player", owner, ""
     name = leaf(owner_class)
@@ -96,42 +73,37 @@ def classify_owner(owner: int, owner_class: str | None,
     return "unknown", None, ""
 
 
-def carrier_at(held, t_ms: int):
-    """The custody interval covering `t_ms`, or None if nobody held it then.
-
-    `to_ms` is None for the last interval of a bomb whose actor never closed,
-    and that interval runs to the end of the replay.
-    """
-    covering = [r for r in held
+def carrier_at(rows, t_ms: int):
+    """Unambiguous carrier at an event time, from the whole ordered timeline.
+    A None `to_ms` covers the rest of the replay."""
+    # Events have no packet/row key comparable to Owner writes or actor closes.
+    # Include both sides of a timestamp tie: distinct owners, non-carriers or
+    # a terminal close are unresolved, not evidence for either event ordering.
+    # Repeated same-owner writes preserve attribution, including zero durations.
+    covering = [r for r in rows
                 if r["from_ms"] <= t_ms and (r["to_ms"] is None or t_ms <= r["to_ms"])]
-    return covering[-1] if covering else None
+    if not covering or covering[-1]["to_ms"] == t_ms:
+        return None
+    if any(r["holder_kind"] not in HELD_KINDS for r in covering):
+        return None
+    if len({(r["bomb_net_guid"], r["owner_net_guid"]) for r in covering}) != 1:
+        return None
+    return covering[-1]
 
 
 def unresolved(rows, events) -> list[str]:
-    """Everything this extraction failed to resolve, as readable lines.
-
-    The command returned 0 whatever it could not answer. Two answers it cannot
-    fail to have:
-
-    - Custody at all. Zero rows writes a valid, empty Parquet, prints
-      "0 custody intervals" and exits 0 -- indistinguishable, to anything
-      reading `$?`, from a replay whose spike changed hands forty times.
-    - A carrier for every plant. The module docstring already says what a
-      `NO CARRIER` plant means: the chain between the `Owner` log and the
-      `spikePlanted` event dropped something. It was printed as one more line
-      of output.
-    """
+    """What this extraction failed to resolve, one line each; any line makes
+    the exit nonzero: no custody at all, or a plant without a proven carrier."""
     problems = []
     if not rows:
         problems.append(
             "no custody intervals at all: no BombEquippable_C.Owner writes "
             "were found, so an empty table was written")
-    held = [r for r in rows if r["holder_kind"] in HELD_KINDS]
     for group, t1 in zip(events.get("group", []), events.get("time1", [])):
-        if group == "spikePlanted" and carrier_at(held, t1) is None:
+        if group == "spikePlanted" and carrier_at(rows, t1) is None:
             problems.append(
-                f"plant at t={t1} resolves to NO CARRIER: no player or proxy "
-                f"held the spike at that moment")
+                f"plant at t={t1} has NO UNAMBIGUOUS CARRIER: custody is absent, "
+                f"non-carried, or tied with an unordered transition/close")
     return problems
 
 
@@ -140,12 +112,14 @@ def load(out_dir: Path):
         if not (out_dir / name).exists():
             raise SystemExit(f"no {name} in {out_dir} -- run `vrfkit export` first")
 
-    fields = pq.read_table(out_dir / "fields.parquet")
-    f = {c: fields.column(c).to_pylist() for c in
-         ("time_ms", "actor_net_guid", "group_path", "field_name",
-          "value_i64", "raw_bits")}
+    # Filtered in Arrow (~1% of the rows are read); the first Instigator write
+    # per actor depends on the physical order Table.filter keeps.
+    fields = read_parquet(out_dir / "fields.parquet", columns=list(FIELD_COLUMNS))
+    fields = fields.filter(pc.is_in(fields.column("field_name"),
+                                    value_set=pa.array(FIELD_NAMES)))
+    f = {c: fields.column(c).to_pylist() for c in FIELD_COLUMNS}
 
-    actors = pq.read_table(out_dir / "actors.parquet")
+    actors = read_parquet(out_dir / "actors.parquet")
     a = {c: actors.column(c).to_pylist() for c in
          ("time_ms", "actor_net_guid", "event", "class_path")}
 
@@ -154,7 +128,7 @@ def load(out_dir: Path):
     events = {}
     ev_path = out_dir / "events.parquet"
     if ev_path.exists():
-        et = pq.read_table(ev_path)
+        et = read_parquet(ev_path)
         events = {c: et.column(c).to_pylist() for c in ("group", "time1", "metadata")}
     return f, a, manifest, events
 
@@ -162,10 +136,8 @@ def load(out_dir: Path):
 def build(out_dir: Path):
     f, a, manifest, events = load(out_dir)
 
-    # actor_net_guid -> class_path. Dynamic actors (the spike, pawns) are not in
-    # net_guids.parquet at all, so actors.parquet is the only resolver for them.
-    # No GUID on the sample export carries two distinct class paths, so a flat
-    # map is safe; a future export that recycles GUIDs would need time scoping.
+    # Dynamic actors (the spike, pawns) appear only in actors.parquet. A flat
+    # map: a GUID recycled for another class would need time scoping.
     guid_class: dict[int, str] = {}
     for g, cp in zip(a["actor_net_guid"], a["class_path"]):
         if cp:
@@ -181,14 +153,10 @@ def build(out_dir: Path):
             if ev == "close":
                 bomb_close.setdefault(g, t)
 
-    pawn_subject = {p["character_net_guid"]: p["subject"]
-                    for p in manifest.get("players", [])}
+    bodies = load_player_bodies(out_dir, manifest)
+    pawn_subject = bodies.subjects
 
-    # Round boundaries from the replay's own roundStarted events. A
-    # `roundStarted` row whose metadata does not parse as an integer has no
-    # real round number to report -- None is written through to the
-    # `round_number` column (nullable int32) as a visible absence rather than
-    # a fabricated ordinal that a consumer cannot tell from a real round.
+    # Non-integer roundStarted metadata gives a null round_number.
     round_starts: list[tuple[int, int | None]] = []
     malformed_round_meta = 0
     for grp, t1, meta in zip(events.get("group", []), events.get("time1", []),
@@ -203,41 +171,32 @@ def build(out_dir: Path):
     round_ts = [t for t, _ in round_starts]
 
     def round_of(ms: int):
-        if not round_ts:
-            return None
         i = bisect.bisect_right(round_ts, ms) - 1
         return round_starts[i][1] if i >= 0 else None
 
-    # An actor's own Instigator, used to walk a proxy carrier (Wingman) back to
-    # the player that spawned it.
+    # instigator: an actor's first Instigator write (the proxy walk);
+    # owner_log: every Owner write on a bomb channel, sorted below;
+    # in_hand: AresInventory (pawn, bomb) pairs with their timestamps.
     instigator: dict[int, int] = {}
-    for i, name in enumerate(f["field_name"]):
-        if name == "Instigator" and f["value_i64"][i]:
-            instigator.setdefault(f["actor_net_guid"][i], f["value_i64"][i])
-
-    # Every Owner write on a bomb channel, in time order: the custody log.
-    owner_log: dict[int, list[tuple[int, int]]] = {}
-    for i, grp in enumerate(f["group_path"]):
-        if (BOMB_CLASS in grp and f["field_name"][i] == "Owner"
-                and f["value_i64"][i] is not None):
-            owner_log.setdefault(f["actor_net_guid"][i], []).append(
-                (f["time_ms"][i], f["value_i64"][i]))
-
-    # AresInventory side: (pawn, bomb) pairs seen in hand, with timestamps.
+    owner_log: dict[int, list[tuple[int, int, int]]] = {}
     in_hand: dict[tuple[int, int], list[int]] = {}
-    for i, grp in enumerate(f["group_path"]):
-        if (grp.endswith("AresInventory")
-                and f["field_name"][i] in ("CurrentEquippable",
-                                           "NewCurrentEquippable")
-                and f["value_i64"][i] in bombs):
-            in_hand.setdefault(
-                (f["actor_net_guid"][i], f["value_i64"][i]), []
-            ).append(f["time_ms"][i])
+    for t, packet, actor, grp, name, value in zip(
+            f["time_ms"], f["packet_id"], f["actor_net_guid"], f["group_path"], f["field_name"],
+            f["value_i64"]):
+        if name == "Instigator":
+            if value:
+                instigator.setdefault(actor, value)
+        elif name == "Owner":
+            if BOMB_CLASS in grp and value is not None:
+                owner_log.setdefault(actor, []).append((t, packet, value))
+        elif grp.endswith("AresInventory") and value in bombs:
+            in_hand.setdefault((actor, value), []).append(t)
 
     rows: list[dict] = []
     for bomb, log in sorted(owner_log.items()):
-        log.sort()
-        for n, (t, owner) in enumerate(log):
+        # Stable sorting keeps physical row order within a timestamp/packet tie.
+        log.sort(key=lambda write: (write[0], write[1]))
+        for n, (t, _, owner) in enumerate(log):
             end = log[n + 1][0] if n + 1 < len(log) else bomb_close.get(bomb)
             cls = guid_class.get(owner)
             kind, carrier, proxy = classify_owner(
@@ -250,27 +209,20 @@ def build(out_dir: Path):
                 "to_ms": end,
                 "duration_ms": (end - t) if end is not None else None,
                 "owner_net_guid": owner,
-                # All six columns are nullable in SCHEMA. `leaf()` and
-                # `classify_owner()` both use "" as their own internal
-                # "nothing here" value (tested and relied on where they are
-                # called from each other), but at the row boundary that
-                # collapses "no lookup was possible" (owner_class: guid_class
-                # missed) into the same value as "resolved and genuinely
-                # empty" -- and reads, to a consumer grouping by owner_class,
-                # as a real category rather than a failed lookup. `to_ms`,
-                # `duration_ms` and `carrier_pawn_guid` already render that
-                # absence as None; these three now match.
+                # None, never "": "" would group as a real category.
                 "owner_class": leaf(cls) or None,
                 "holder_kind": kind,
                 "carrier_pawn_guid": carrier,
-                "carrier_subject": pawn_subject.get(carrier, "") or None,
+                "carrier_subject": pawn_subject.get(carrier) or None,
+                # The manifest's (last) SpawnedCharacter or an earlier one.
+                "carrier_identity_provenance": bodies.provenance.get(carrier),
                 "via_proxy_class": proxy or None,
                 "in_hand": any(t <= h and (end is None or h <= end)
                                for h in held),
             })
 
     rows.sort(key=lambda r: (r["from_ms"], r["bomb_net_guid"]))
-    return rows, events, malformed_round_meta
+    return rows, events, malformed_round_meta, bodies.counts
 
 
 SCHEMA = pa.schema([
@@ -284,6 +236,7 @@ SCHEMA = pa.schema([
     pa.field("holder_kind", pa.string()),
     pa.field("carrier_pawn_guid", pa.int64()),
     pa.field("carrier_subject", pa.string()),
+    pa.field("carrier_identity_provenance", pa.string()),
     pa.field("via_proxy_class", pa.string()),
     pa.field("in_hand", pa.bool_()),
 ])
@@ -299,11 +252,19 @@ def main() -> int:
                     help="also print the timeline, carried intervals only")
     args = ap.parse_args()
 
-    rows, events, malformed_round_meta = build(args.export)
+    # Only inputs: previous analysis outputs and hard links remain replaceable.
+    try:
+        refuse_input_path(args.out, [args.export / name for name in
+                                    ("fields.parquet", "actors.parquet",
+                                     "manifest.json", "events.parquet")])
+    except ValueError as exc:
+        print(f"FAILED: {exc}", file=sys.stderr)
+        return 1
+
+    rows, events, malformed_round_meta, identity = build(args.export)
     cols = {name: [r[name] for r in rows] for name in SCHEMA.names}
     table = pa.Table.from_pydict(cols, schema=SCHEMA)
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(table, args.out, compression="zstd")
+    atomic_write_file(args.out, lambda out: pq.write_table(table, out, compression="zstd"))
 
     by_kind = Counter(r["holder_kind"] for r in rows)
     print(f"wrote {args.out} ({len(rows)} custody intervals)")
@@ -311,25 +272,21 @@ def main() -> int:
         print(f"  {k:8s} {n}")
     print(f"  malformed roundStarted metadata: {malformed_round_meta} "
           f"(round_number is null for the interval(s) it touches)")
+    earlier = sum(r["carrier_identity_provenance"] == EARLIER_PROVENANCE for r in rows)
+    print(f"  carried by an earlier SpawnedCharacter pawn: {earlier} interval(s); "
+          f"player identity: {json.dumps(identity, sort_keys=True)}")
 
     held = [r for r in rows if r["holder_kind"] in HELD_KINDS]
     print(f"  rounds {len({r['round_number'] for r in rows})}, "
           f"with a carrier {len({r['round_number'] for r in held})}, "
           f"bombs {len({r['bomb_net_guid'] for r in rows})}")
 
-    # The carrier at plant time. `spikePlanted` carries no planter identity in
-    # its payload, so this is the join answering rather than a check -- but a
-    # plant with no carrier means the chain dropped something, and `unresolved`
-    # below turns that into a nonzero exit rather than a line of output.
+    # The carrier at plant time is the join's answer: `spikePlanted` names no planter.
     for grp, t1 in zip(events.get("group", []), events.get("time1", [])):
         if grp != "spikePlanted":
             continue
-        who = carrier_at(held, t1)
-        # `carrier_subject` is guaranteed non-None for the HELD_KINDS rows
-        # `held` is filtered to (both kinds only return a carrier already
-        # present in `pawn_subject`) -- guarded anyway now that the column
-        # can carry None, rather than relying on that invariant holding here.
-        tag = "NO CARRIER" if who is None else (
+        who = carrier_at(rows, t1)
+        tag = "NO UNAMBIGUOUS CARRIER" if who is None else (
             f"{(who['carrier_subject'] or '?')[:8]} pawn={who['carrier_pawn_guid']}"
             + (f" via {who['via_proxy_class']}" if who["via_proxy_class"] else ""))
         round_disp = who["round_number"] if who and who["round_number"] is not None else "?"
